@@ -63,6 +63,9 @@ def verified_seed() -> dict:
                             "temperature_setting": setting["wash_temperature_setting"],
                             "spin_level": setting["spin_setting"],
                             "spin_rpm": setting["spin_rpm"],
+                            "is_default": setting["is_default"],
+                            "manual_page": setting["manual_page"],
+                            "evidence": setting["evidence"],
                             "source_url": f'{washer["manual_url"]}#page={setting["manual_page"]}',
                             "verification_status": "confirmed",
                         }

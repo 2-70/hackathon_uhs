@@ -19,6 +19,61 @@ def success():
     }]})
 
 
+def test_gemini_uses_first_working_backup_after_credential_and_quota_errors():
+    attempted = []
+
+    def handler(request):
+        key = request.headers["x-goog-api-key"]
+        attempted.append(key)
+        if key == "invalid":
+            return httpx.Response(403)
+        if key == "exhausted":
+            return httpx.Response(429)
+        return success()
+
+    analyzer = GeminiAnalyzer(
+        "invalid", backup_keys=("exhausted", "working"), transport=httpx.MockTransport(handler),
+    )
+    result = asyncio.run(analyzer.analyze(b"photo", "image/jpeg", "auto"))
+
+    assert result.image_type == "unknown"
+    assert attempted == ["invalid", "exhausted", "working"]
+    assert analyzer.api_key == "working"
+
+
+def test_daily_quota_pauses_a_model_until_the_reset_and_a_minute_limit_for_a_minute():
+    per_minute = httpx.Response(429, json={"error": {"details": [{"violations": [
+        {"quotaId": "GenerateRequestsPerMinutePerProjectPerModel-FreeTier"},
+    ]}]}})
+    per_day = httpx.Response(429, json={"error": {"details": [{"violations": [
+        {"quotaId": "GenerateRequestsPerDayPerProjectPerModel-FreeTier"},
+    ]}]}})
+
+    assert gemini.quota_pause_seconds(per_minute) == 60
+    # A daily limit, or a reply that names no limit, keeps the model paused until midnight Pacific time.
+    for reply in (per_day, httpx.Response(429)):
+        assert 0 < gemini.quota_pause_seconds(reply) <= 24 * 3600
+
+
+def test_spent_quota_is_checked_once_before_switching_models():
+    attempted = []
+
+    def handler(request):
+        model = request.url.path.split("/models/")[1].split(":")[0]
+        attempted.append((model, request.headers["x-goog-api-key"]))
+        return httpx.Response(429) if model == gemini.DEFAULT_MODEL else success()
+
+    analyzer = GeminiAnalyzer("first", backup_keys=("second", "third"), transport=httpx.MockTransport(handler))
+    for _ in range(2):
+        assert asyncio.run(analyzer.analyze(b"photo", "image/jpeg", "auto")).image_type == "unknown"
+
+    # The first request learns that every key is out of quota. The next one goes straight to the other model.
+    assert attempted == [
+        (gemini.DEFAULT_MODEL, "first"), (gemini.DEFAULT_MODEL, "second"), (gemini.DEFAULT_MODEL, "third"),
+        (gemini.QUOTA_FALLBACK_MODEL, "first"), (gemini.QUOTA_FALLBACK_MODEL, "first"),
+    ]
+
+
 @pytest.mark.parametrize("failure", [429, 500, 503, "timeout", "connection"])
 def test_transient_failure_recovers_without_user_resubmitting(monkeypatch, failure):
     calls = []
@@ -38,7 +93,12 @@ def test_transient_failure_recovers_without_user_resubmitting(monkeypatch, failu
     result = asyncio.run(analyzer.analyze(b"photo", "image/jpeg", "auto"))
     assert result.image_type == "unknown"
     assert len(calls) == 2
-    assert calls[0].content == calls[1].content
+    if failure == 429:
+        # A request limit is counted per model, so the same photo goes to the quota fallback model.
+        assert calls[1].url.path.endswith(f"models/{gemini.QUOTA_FALLBACK_MODEL}:generateContent")
+        assert json.loads(calls[0].content)["contents"] == json.loads(calls[1].content)["contents"]
+    else:
+        assert calls[0].content == calls[1].content
 
 
 @pytest.mark.parametrize("status,reason,code", [
@@ -124,7 +184,7 @@ def test_high_resolution_small_file_is_resized_and_rotated(image_type, expected_
     assert mime_type == "image/jpeg"
 
 
-def test_reference_photo_does_not_wait_for_gemini(monkeypatch):
+def test_reference_photo_remains_available_without_a_gemini_key(monkeypatch):
     from hashlib import sha256
 
     from backend.app.ai import catalog
@@ -136,9 +196,9 @@ def test_reference_photo_does_not_wait_for_gemini(monkeypatch):
     monkeypatch.setattr(catalog, "load_catalog", lambda: [entry])
 
     def handler(_):
-        pytest.fail("Verified reference must not call Gemini")
+        pytest.fail("An unconfigured analyzer must not send a request")
 
-    app.dependency_overrides[get_analyzer] = lambda: GeminiAnalyzer("test-key", transport=httpx.MockTransport(handler))
+    app.dependency_overrides[get_analyzer] = lambda: GeminiAnalyzer(None, transport=httpx.MockTransport(handler))
     try:
         with TestClient(app) as client:
             response = client.post("/api/analyze", files={"image": ("photo.jpg", photo)})

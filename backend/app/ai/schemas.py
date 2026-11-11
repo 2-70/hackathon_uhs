@@ -4,6 +4,7 @@ from pydantic import BaseModel, ConfigDict, Field, HttpUrl, StringConstraints
 
 PhotoType = Literal["garment", "care_label", "unknown"]
 RequestedPhotoType = Literal["auto", "garment", "care_label"]
+GarmentSearchStage = Literal["initial", "retry", "estimate"]
 ShortText = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=300)]
 LabelText = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=2000)]
 Temperature = Annotated[int, Field(ge=1, le=100)]
@@ -13,6 +14,9 @@ DryerHeat = Literal["no_heat", "low", "normal"]
 NaturalDry = Literal["line_dry", "drip_line_dry", "flat_dry", "drip_flat_dry"]
 NextAction = Literal["capture_label", "retake_photo", "manual_entry"]
 PhotoIssue = Literal["blurry", "glare", "cropped", "wrong_label", "missing_information"]
+ProductSource = Literal["official_product", "product_listing"]
+ProductGuidanceSource = Literal["official_product", "product_listing", "material_estimate", "estimated"]
+FieldSource = Literal["garment_photo", "care_label", "official_product", "product_listing"]
 Value = TypeVar("Value")
 
 
@@ -54,6 +58,13 @@ class PhotoCareSuggestion(ExtractionModel):
     # Discard any unrequested wash or dry settings from an appearance-only photo.
     model_config = ConfigDict(extra="ignore", strict=True)
     sorting: Literal["similar_colors", "separate_dark_colors"] | None = None
+    handling: Literal["knit", "print_or_embroidery", "delicate_details", "sturdy_everyday"] | None = None
+    guidance: list[ShortText] = Field(default_factory=list, max_length=4)
+
+
+class MaterialCareTips(ExtractionModel):
+    washing: Literal["mesh_bag", "mild_detergent", "wool_detergent", "light_agitation", "avoid_softener"] | None = None
+    drying: Literal["dry_flat", "dry_in_shade", "reshape_and_air_dry"] | None = None
 
 
 class PhotoReadings(ExtractionModel):
@@ -78,7 +89,7 @@ class CareLabelPhotoReadings(ExtractionModel):
 
 class AnalyzedField(BaseModel):
     value: str | bool | int | None
-    source: Literal["garment_photo", "care_label", "official_product"]
+    source: FieldSource
     status: Literal["estimated", "read_from_label", "verified", "needs_confirmation"]
     evidence: str | None
 
@@ -121,7 +132,7 @@ class ProductCareResponse(BaseModel):
     product: ProductInfo
     product_care: dict[str, AnalyzedField]
     care_guidance: list[str]
-    care_guidance_source: Literal["official_product"] | None = None
+    care_guidance_source: ProductGuidanceSource | None = None
     photo_request: PhotoRequest | None = None
     next_actions: list[NextAction] = Field(default_factory=list)
     message: str
@@ -133,9 +144,10 @@ class AnalysisResponse(BaseModel):
     garment: dict[str, AnalyzedField] = Field(default_factory=dict)
     care_label: dict[str, AnalyzedField] = Field(default_factory=dict)
     product_lookup: ProductLookup | None = None
+    search_warning: str | None = None
     product_care: dict[str, AnalyzedField] = Field(default_factory=dict)
     care_guidance: list[str] = Field(default_factory=list)
-    care_guidance_source: Literal["estimated", "care_label", "official_product"] | None = None
+    care_guidance_source: ProductGuidanceSource | Literal["estimated", "care_label"] | None = None
     photo_request: PhotoRequest | None = None
     next_actions: list[NextAction] = Field(default_factory=list)
     message: str

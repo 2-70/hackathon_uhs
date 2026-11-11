@@ -62,6 +62,7 @@ class SettingSeed(BaseModel):
     model_config = ConfigDict(extra="forbid")
     temperature_celsius: int | None = Field(default=None, ge=0, le=100)
     temperature_setting: str | None = Field(default=None, max_length=40)
+    wash_strength: str | None = Field(default=None, max_length=30)
     spin_level: str | None = Field(default=None, max_length=40)
     spin_rpm: int | None = Field(default=None, ge=0)
     water_level: str | None = Field(default=None, max_length=40)
@@ -69,6 +70,9 @@ class SettingSeed(BaseModel):
     duration_minutes: int | None = Field(default=None, ge=0)
     source_url: str | None = Field(default=None, max_length=500)
     verification_status: str = Field(min_length=1, max_length=30)
+    is_default: bool = False
+    manual_page: int | None = Field(default=None, ge=1)
+    evidence: str | None = Field(default=None, max_length=500)
 
     @property
     def setting_key(self) -> str:
@@ -84,8 +88,16 @@ class SettingSeed(BaseModel):
         )
         # None도 문자열로 명시해 비어 있는 값의 위치를 보존합니다.
         key = "|".join("null" if value is None else str(value) for value in values)
+        # 새 공식 시드만 이름 온도와 RPM을 키 뒤에 추가해 구형 키를 바꾸지 않습니다.
         if self.temperature_setting is not None or self.spin_rpm is not None:
-            key += "|" + json.dumps([self.temperature_setting, self.spin_rpm], ensure_ascii=False)
+            extra_values = [self.temperature_setting, self.spin_rpm]
+            # 기존 AI 공식 시드는 두 값으로 만든 키를 유지하고, 새 강도 값이 있을 때만 확장합니다.
+            if self.wash_strength is not None:
+                extra_values.append(self.wash_strength)
+            key += "|" + json.dumps(extra_values, ensure_ascii=False)
+        elif self.wash_strength is not None:
+            # 숫자 온도·RPM만 있던 구형 키도 새 강도가 제공되지 않으면 그대로 유지됩니다.
+            key += "|" + json.dumps([None, None, self.wash_strength], ensure_ascii=False)
         return key
 
 
@@ -120,6 +132,10 @@ class MachineModelSeed(BaseModel):
     source_url: str | None = Field(default=None, max_length=500)
     verification_status: str = Field(min_length=1, max_length=30)
     verified_scope: str | None = Field(default=None, max_length=500)
+    capacity_kg: float | None = Field(default=None, gt=0)
+    release_year: int | None = Field(default=None, ge=1900, le=2100)
+    capacity_source_url: str | None = Field(default=None, max_length=500)
+    capacity_verification_status: str | None = Field(default=None, max_length=30)
     courses: list[CourseSeed] = Field(default_factory=list)
 
     @model_validator(mode="after")
@@ -198,7 +214,7 @@ def _upsert_product(db: Session, seed: ProductSeed) -> Product:
     return product
 
 
-def _upsert_machine_model(db: Session, seed: MachineModelSeed) -> MachineModel:
+def upsert_machine_model(db: Session, seed: MachineModelSeed) -> MachineModel:
     """machine_key 기준으로 모델·코스·설정 조합을 추가하거나 갱신합니다."""
 
     # 안정 키가 같은 모델은 기존 ID를 유지해 사용자 등록 참조를 보존합니다.
@@ -214,6 +230,10 @@ def _upsert_machine_model(db: Session, seed: MachineModelSeed) -> MachineModel:
     machine.source_url = seed.source_url
     machine.verification_status = seed.verification_status
     machine.verified_scope = seed.verified_scope
+    machine.capacity_kg = seed.capacity_kg
+    machine.release_year = seed.release_year
+    machine.capacity_source_url = seed.capacity_source_url
+    machine.capacity_verification_status = seed.capacity_verification_status
     # 모델 ID가 있어야 코스의 외래 키를 채울 수 있습니다.
     db.flush()
     for course_seed in seed.courses:
@@ -254,6 +274,7 @@ def _upsert_machine_model(db: Session, seed: MachineModelSeed) -> MachineModel:
             # 확인된 조합의 각 값을 그대로 저장하며 없는 조합을 추측해 만들지 않습니다.
             setting.temperature_celsius = setting_seed.temperature_celsius
             setting.temperature_setting = setting_seed.temperature_setting
+            setting.wash_strength = setting_seed.wash_strength
             setting.spin_level = setting_seed.spin_level
             setting.spin_rpm = setting_seed.spin_rpm
             setting.water_level = setting_seed.water_level
@@ -261,6 +282,9 @@ def _upsert_machine_model(db: Session, seed: MachineModelSeed) -> MachineModel:
             setting.duration_minutes = setting_seed.duration_minutes
             setting.source_url = setting_seed.source_url
             setting.verification_status = setting_seed.verification_status
+            setting.is_default = setting_seed.is_default
+            setting.manual_page = setting_seed.manual_page
+            setting.evidence = setting_seed.evidence
     return machine
 
 
@@ -274,7 +298,7 @@ def load_seed_data(db: Session, raw_data: dict[str, Any]) -> dict[str, int]:
         for product_seed in document.products:
             _upsert_product(db, product_seed)
         for machine_seed in document.machine_models:
-            _upsert_machine_model(db, machine_seed)
+            upsert_machine_model(db, machine_seed)
         # 모든 레코드가 정상적으로 처리된 뒤에만 커밋합니다.
         db.commit()
     except Exception:

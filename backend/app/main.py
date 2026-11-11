@@ -31,7 +31,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
 app = FastAPI(
     title=get_settings().app_name,
     version="0.1.0",
-    description="옷장·공용 기기·사용자 기기 등록을 제공하는 WashWise 백엔드 기반",
+    description="옷장·실제 기기 설정·최소 세탁 계획·설정 검증을 제공하는 WashWise 백엔드",
     lifespan=lifespan,
 )
 # 모바일 개발 서버가 브라우저를 통해 API를 호출할 수 있도록 허용 주소를 등록합니다.
@@ -87,7 +87,7 @@ async def handle_validation_error(_: Request, exc: RequestValidationError) -> JS
 async def handle_http_error(_: Request, exc: HTTPException) -> JSONResponse:
     """FastAPI 기본 HTTP 오류도 같은 응답 형식으로 통일합니다."""
 
-    # 프레임워크 기본 detail을 공개하되 내부 예외는 이 핸들러까지 오지 않습니다.
+    # AI 라우터가 detail에 구조화된 오류 코드를 담은 경우 그대로 보존합니다.
     detail = exc.detail if isinstance(exc.detail, dict) else {}
     return JSONResponse(
         status_code=exc.status_code,

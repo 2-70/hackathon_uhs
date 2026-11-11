@@ -72,5 +72,60 @@
         "evidence": "세탁기 사용 가능"
       }
     }
+  },
+  {
+    "product": {
+      "id": "nike-hv4119-254",
+      "name": "나이키 솔로 스우시 남성 플리스 크루",
+      "brand": "Nike",
+      "color": "미디엄 애쉬/블랙/화이트",
+      "product_code": "HV4119-254",
+      "source_url": "https://www.nike.com/jp/t/ナイキ-ソロ-スウッシュ-メンズ-フリース-クルー-RnS096Mo/HV4119-254"
+    },
+    "garment_type": "크루넥 스웻셔츠",
+    "image_sha256": ["8e95e95608056c77d16dce14540f2522311d9f3b4e33d2d20cfb0b7b34a22eeb"],
+    "reference_image_url": "https://static.nike.com/a/images/t_web_pdp_936_v2/f_auto/32bc915c-aaa9-476c-8d57-5dfb22b39fc5/AS%2BM%2BNL%2BSOLO%2BSWSH%2BBB%2BCREW%2BGFX.png",
+    "care": {
+      "fiber_content": {
+        "value": "본체: 면 84%, 폴리에스터 16%. 리브: 면 98%, 스판덱스 2%",
+        "evidence": "本体：コットン84％、ポリエステル16％リブ部分：コットン98％、スパンデックス2％"
+      },
+      "wash_method": {
+        "value": "machine_wash",
+        "evidence": "洗濯機洗い可能"
+      }
+    }
+  },
+  {
+    "product": {
+      "id": "puma-634279-06",
+      "name": "푸마 RETRO 컬러블록 오버사이즈 우븐 크루",
+      "brand": "PUMA",
+      "color": "라이트네이비",
+      "product_code": "634279-06",
+      "source_url": "https://m.gsshop.com/prd/prd.gs?prdid=1136469510"
+    },
+    "garment_type": "우븐 크루넥",
+    "image_sha256": [
+      "0a323a82d03ec2271e4c684d40f24a02323dd96da1847462929b04ddf9d5e3d5",
+      "1213646fe36b7ef06690eb0660f20ea030b160c0276c46860ba951dded73efdc"
+    ],
+    "reference_image_url": "https://img.29cm.co.kr/item/202607/11f185a12fe98d55964547a15088538b.jpg",
+    "reference_page_url": "https://www.29cm.co.kr/products/4097927",
+    "care_source": "product_listing",
+    "care": {
+      "bleach": {
+        "value": "염소계 표백제와 강력 효소 세제는 피하세요.",
+        "evidence": "염소 표백제 및 강력효소세제는 절대 사용 하지 마십시오."
+      },
+      "dry_in_shade": {
+        "value": true,
+        "evidence": "통풍이 잘되는 그늘에서 건조하십시오."
+      },
+      "special_instructions": {
+        "value": "흰옷과 따로 세탁하고, 밴드가 변형될 수 있으니 뜨거운 물은 피하세요.",
+        "evidence": "짙은 색상 및 흰색은 구분하여 세탁하십시오. 립이나 밴드 부분은 뜨거운 물에서 변형되므로 특히 유의 하십시오."
+      }
+    }
   }
 ]

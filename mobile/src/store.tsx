@@ -6,9 +6,10 @@ import {
 import {
   deleteGarment, listWardrobe, readRegisteredMachine, writeGarment, writeRegisteredMachine,
 } from './api';
-import type { Garment, GarmentDraft, Machine } from './model';
+import type { Garment, GarmentDraft, GarmentPhotos, Machine } from './model';
 
 const photoStorageKey = 'washwise.local-photos.v1';
+const basketStorageKey = 'washwise.basket.v1';
 export const basketLimit = 10;
 
 type SavedData = { garments: Garment[]; machine: Machine | null };
@@ -16,9 +17,7 @@ type Laundry = SavedData & {
   ready: boolean;
   loadError: string | null;
   basketIds: string[];
-  analysisStarted: boolean;
-  startAnalysis: () => void;
-  saveGarment: (draft: GarmentDraft, id?: string) => Promise<Garment>;
+  saveGarment: (draft: GarmentDraft, id?: string, photos?: GarmentPhotos) => Promise<Garment>;
   removeGarment: (id: string) => Promise<void>;
   addToBasket: (ids: string[]) => number;
   removeFromBasket: (id: string) => void;
@@ -29,23 +28,18 @@ const initialData: SavedData = { garments: [], machine: null };
 const LaundryContext = createContext<Laundry | null>(null);
 const photoDirectory = FileSystem.documentDirectory && FileSystem.documentDirectory + 'washwise-photos/';
 
-async function keepPhoto(uri?: string) {
-  if (!uri || !photoDirectory || uri.startsWith(photoDirectory)) return uri;
-  await FileSystem.makeDirectoryAsync(photoDirectory, { intermediates: true });
-  const suffix = uri.match(/\.(jpe?g|png|webp|heic|heif|gif)(?:[?#]|$)/i)?.[1] ?? 'jpg';
-  const destination = photoDirectory + createId() + '.' + suffix;
-  await FileSystem.copyAsync({ from: uri, to: destination });
-  return destination;
-}
-
 async function discardPhoto(uri?: string) {
   if (uri && photoDirectory && uri.startsWith(photoDirectory)) {
     await FileSystem.deleteAsync(uri, { idempotent: true }).catch(() => {});
   }
 }
 
-function createId() {
-  return Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 10);
+function parseStorage(value: string | null): unknown {
+  try {
+    return value ? JSON.parse(value) : null;
+  } catch {
+    return null;
+  }
 }
 
 export function LaundryProvider({ children }: { children: ReactNode }) {
@@ -56,23 +50,32 @@ export function LaundryProvider({ children }: { children: ReactNode }) {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [basketIds, setBasketIds] = useState<string[]>([]);
   const basket = useRef<string[]>([]);
-  const [analysisStarted, setAnalysisStarted] = useState(false);
+  const basketWrites = useRef<Promise<unknown>>(Promise.resolve());
+  const legacyPhotos = useRef<Record<string, string>>({});
 
   useEffect(() => {
     let active = true;
     async function load() {
       try {
-        const [garments, machine, rawPhotos] = await Promise.all([
+        const [garments, machine, rawPhotos, rawBasket] = await Promise.all([
           listWardrobe(), readRegisteredMachine(), AsyncStorage.getItem(photoStorageKey).catch(() => null),
+          AsyncStorage.getItem(basketStorageKey).catch(() => null),
         ]);
         if (!active) return;
-        let photos: Record<string, string> = {};
-        try {
-          if (rawPhotos) photos = JSON.parse(rawPhotos);
-        } catch {
-          // Photos are device-local; a damaged reference does not hide the server wardrobe.
+        const photos = parseStorage(rawPhotos);
+        if (photos && typeof photos === 'object' && !Array.isArray(photos)) {
+          legacyPhotos.current = Object.fromEntries(Object.entries(photos).filter(([, uri]) => typeof uri === 'string'));
         }
-        const loaded = { garments: garments.map((item) => ({ ...item, photo: photos[item.id] })), machine };
+        const loaded = {
+          garments: garments.map((item) => ({ ...item, photo: item.photo ?? legacyPhotos.current[item.id] })),
+          machine,
+        };
+        const storedIds = parseStorage(rawBasket);
+        const ids = new Set(garments.map(({ id }) => id));
+        if (Array.isArray(storedIds)) {
+          basket.current = [...new Set(storedIds.filter((id) => ids.has(id)))].slice(0, basketLimit);
+          setBasketIds(basket.current);
+        }
         current.current = loaded;
         setData(loaded);
       } catch {
@@ -97,32 +100,25 @@ export function LaundryProvider({ children }: { children: ReactNode }) {
     setData(next);
   }
 
-  async function keepPhotoReferences(garments: Garment[]) {
-    const photos = Object.fromEntries(
-      garments.filter((item) => item.photo && !item.photo.startsWith('data:'))
-        .map((item) => [item.id, item.photo]),
-    );
-    await AsyncStorage.setItem(photoStorageKey, JSON.stringify(photos)).catch(() => {});
+  async function removeLegacyPhoto(id: string) {
+    const photo = legacyPhotos.current[id];
+    if (!photo) return;
+    delete legacyPhotos.current[id];
+    await AsyncStorage.setItem(photoStorageKey, JSON.stringify(legacyPhotos.current)).catch(() => {});
+    await discardPhoto(photo);
   }
 
-  function saveGarment(draft: GarmentDraft, id?: string) {
+  function saveGarment(draft: GarmentDraft, id?: string, photos?: GarmentPhotos) {
     return enqueue(async () => {
       const previous = current.current.garments.find((garment) => garment.id === id);
       if (id && !previous) throw new Error('Garment not found');
-      const photo = await keepPhoto(draft.photo);
-      let saved: Garment;
-      try {
-        saved = { ...await writeGarment(draft, id), photo };
-      } catch (error) {
-        if (photo !== draft.photo) await discardPhoto(photo);
-        throw error;
-      }
+      const row = await writeGarment(draft, id, photos);
+      const saved = { ...row, photo: row.photo ?? legacyPhotos.current[row.id] };
       const garments = previous
         ? current.current.garments.map((garment) => garment.id === id ? saved : garment)
         : [saved, ...current.current.garments];
       commit({ ...current.current, garments });
-      await keepPhotoReferences(garments);
-      if (previous?.photo !== photo) await discardPhoto(previous?.photo);
+      if (row.photo) await removeLegacyPhoto(row.id);
       return saved;
     });
   }
@@ -130,6 +126,9 @@ export function LaundryProvider({ children }: { children: ReactNode }) {
   function updateBasket(next: string[]) {
     basket.current = next;
     setBasketIds(next);
+    basketWrites.current = basketWrites.current
+      .then(() => AsyncStorage.setItem(basketStorageKey, JSON.stringify(next)))
+      .catch(() => {});
   }
 
   function removeFromBasket(id: string) {
@@ -138,13 +137,11 @@ export function LaundryProvider({ children }: { children: ReactNode }) {
 
   function removeGarment(id: string) {
     return enqueue(async () => {
-      const previous = current.current.garments.find((garment) => garment.id === id);
       await deleteGarment(id);
       const garments = current.current.garments.filter((garment) => garment.id !== id);
       commit({ ...current.current, garments });
-      await keepPhotoReferences(garments);
       removeFromBasket(id);
-      await discardPhoto(previous?.photo);
+      await removeLegacyPhoto(id);
     });
   }
 
@@ -165,8 +162,7 @@ export function LaundryProvider({ children }: { children: ReactNode }) {
 
   return (
     <LaundryContext.Provider value={{
-      ...data, ready, loadError, basketIds, analysisStarted,
-      startAnalysis: () => setAnalysisStarted(true),
+      ...data, ready, loadError, basketIds,
       addToBasket, removeFromBasket, saveGarment, removeGarment, registerMachine,
     }}>
       {children}

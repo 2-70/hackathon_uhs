@@ -7,12 +7,16 @@ import httpx
 import pytest
 from fastapi.testclient import TestClient
 from PIL import Image, PngImagePlugin
+from pydantic import HttpUrl
 
-from backend.app.ai import catalog
+from backend.app.ai import catalog, catalog_photo, official_product
 from backend.app.ai import router as image_router
 from backend.app.ai.gemini import GeminiAnalyzer
+from backend.app.ai.lens import LensWebSearch
 from backend.app.ai.preview import app
-from backend.app.ai.router import get_analyzer, get_web_search
+from backend.app.ai.product_page import ProductPage
+from backend.app.ai.router import get_analyzer, get_lens_search, get_web_search
+from backend.app.ai.schemas import PhotoReadings
 from backend.app.ai.web_search import VisionWebSearch
 
 
@@ -26,13 +30,71 @@ def photo():
 @pytest.fixture
 def client(monkeypatch):
     monkeypatch.delenv("GOOGLE_CLOUD_VISION_API_KEY", raising=False)
+    monkeypatch.delenv("SERPAPI_API_KEY", raising=False)
+    monkeypatch.delenv("GEMINI_API_KEYS", raising=False)
+
+    async def no_product_page(*_):
+        return None
+
+    async def no_candidate_photos(*_):
+        return {}
+
+    monkeypatch.setattr(official_product, "read_product_page", no_product_page)
+    monkeypatch.setattr(official_product, "read_candidate_photos", no_candidate_photos)
     with TestClient(app) as client:
         yield client
     app.dependency_overrides.clear()
 
 
+def answer_single_request(handler):
+    """Answer a combined photo-and-product request with the test's photo reply and product reply."""
+
+    def respond(request):
+        payload = json.loads(request.content)
+        config = payload["generationConfig"]
+        if "photo" not in config["responseJsonSchema"].get("properties", {}):
+            return handler(request)
+        GEMINI_REQUESTS.append("combined")
+        requested, *lookup = payload["contents"][0]["parts"]
+
+        def ask(parts, instruction, schema, tools):
+            body = {
+                **{key: value for key, value in payload.items() if key != "tools"}, **tools,
+                "contents": [{"parts": parts}], "systemInstruction": {"parts": [{"text": instruction}]},
+                "generationConfig": {**config, "responseJsonSchema": schema},
+            }
+            return handler(httpx.Request("POST", request.url, headers={"x-goog-api-key": "test-key"}, json=body))
+
+        photo = ask([requested, lookup[1]], "Read one photo", PhotoReadings.model_json_schema(), {})
+        if photo.status_code != 200:
+            return photo
+        product = ask(
+            lookup, official_product.VERIFY_INSTRUCTION, official_product.OfficialReading.model_json_schema(),
+            {"tools": payload["tools"]} if "tools" in payload else {},
+        )
+        if product.status_code != 200:
+            return product
+        reply = product.json()
+        product_text = reply["candidates"][0]["content"]["parts"][0]["text"]
+        photo_text = photo.json()["candidates"][0]["content"]["parts"][0]["text"]
+        product_reading = json.loads(product_text)
+        if "image_type" in product_reading:
+            # The test answers every request with a photo reading, so no product was identified.
+            product_reading = {}
+        reply["candidates"][0]["content"]["parts"][0]["text"] = json.dumps(
+            {"photo": json.loads(photo_text), "product": product_reading},
+        )
+        return httpx.Response(200, json=reply)
+
+    return respond
+
+
+GEMINI_REQUESTS: list[str] = []
+
+
 def mock_gemini(handler):
-    analyzer = GeminiAnalyzer(api_key="test-key", transport=httpx.MockTransport(handler))
+    GEMINI_REQUESTS.clear()
+    analyzer = GeminiAnalyzer(api_key="test-key", transport=httpx.MockTransport(answer_single_request(handler)))
     app.dependency_overrides[get_analyzer] = lambda: analyzer
 
 
@@ -76,6 +138,9 @@ def test_reads_label_and_explains_washing_and_drying(client, photo):
     assert "표백 금지" in result["care_guidance"]
     assert result["care_guidance_source"] == "care_label"
     assert result["photo_request"] is None
+    assert result["message"] == (
+        "세탁기에 넣을 땐 30°C 이하의 물로 세탁해 주세요. 건조기를 사용하지 마세요. 표백제는 쓰지 마세요."
+    )
 
 
 def test_exact_label_reupload_reuses_readings_without_crossing_photo_types(client, photo):
@@ -104,9 +169,39 @@ def test_exact_label_reupload_reuses_readings_without_crossing_photo_types(clien
     assert requested_types == ["care_label", "garment"]
 
 
-def test_unmatched_garment_photo_requests_label_and_discards_guessed_settings(client, photo):
+@pytest.mark.parametrize(("kind", "searched"), [("롱패딩", False), ("가죽 재킷", False), ("울 코트", False), ("후드 티셔츠", True)])
+def test_garments_not_washed_at_home_get_no_product_lookup(client, photo, kind, searched):
+    searches = []
+    mock_gemini(lambda _: gemini_result({"image_type": "garment", "garment": {
+        "garment_type": {"value": kind, "evidence": "옷의 형태"},
+    }}))
+
+    def lens(request):
+        searches.append(request.url.params.get("engine"))
+        if request.method == "POST":
+            return httpx.Response(200, json={"image_id": "test-id"})
+        return httpx.Response(200, json={request.url.params.get("type", "organic_results"): []})
+
+    app.dependency_overrides[get_lens_search] = lambda: LensWebSearch("test-key", httpx.MockTransport(lens))
+    result = client.post("/api/analyze", files={"image": ("garment.jpg", photo)}).json()
+
+    # The image search runs before the single model request. Text searches for a product do not.
+    assert not any("google" == engine for engine in searches)
+    assert result["care_guidance_source"] == "estimated"
+    assert result["photo_request"]["image_type"] == "care_label"
+    if searched:
+        assert result["product_lookup"]["status"] == "not_found"
+    else:
+        # The kind of garment alone decides this, so no product lookup is reported.
+        assert result["product_lookup"] is None
+        assert "전문 세탁" in result["message"] and kind in result["message"]
+        assert any("전문 세탁" in line or "드라이클리닝" in line for line in result["care_guidance"])
+
+
+def test_unmatched_padded_garment_requests_label_without_estimated_care(client, photo):
     suggestion = {
         "sorting": "separate_dark_colors",
+        "handling": "print_or_embroidery",
         "washing": "30°C로 세탁하세요.",
         "drying": "건조기를 쓰세요.",
     }
@@ -115,15 +210,24 @@ def test_unmatched_garment_photo_requests_label_and_discards_guessed_settings(cl
         payload = json.loads(request.content)
         schema = payload["generationConfig"]["responseJsonSchema"]
         assert "photo_issue" in schema["properties"]
-        assert set(schema["$defs"]["PhotoCareSuggestion"]["properties"]) == {"sorting"}
+        assert set(schema["$defs"]["PhotoCareSuggestion"]["properties"]) == {"sorting", "handling", "guidance"}
         return gemini_result({"image_type": "garment", "garment": {
-            "garment_type": {"value": "스웨트셔츠", "evidence": "긴 소매와 둥근 목"},
+            "garment_type": {"value": "패딩", "evidence": "부풀어 오른 퀼팅 외투"},
             "color": {"value": "다크 그레이", "evidence": "짙은 회색"},
             "product_code": {"value": "ABC-123", "evidence": "옷에 ABC-123이라고 인쇄됨"},
         }, "photo_care": suggestion})
 
     mock_gemini(handler)
-    response = client.post("/api/analyze", files={"image": ("shirt.jpg", photo)})
+    first = client.post("/api/analyze", files={"image": ("shirt.jpg", photo)}).json()
+    assert first["photo_request"]["image_type"] == "care_label"
+    assert "충전재" in first["photo_request"]["instructions"]
+    # General habits for padded outerwear are shown. Wash settings suggested from appearance are not.
+    assert first["care_guidance_source"] == "estimated"
+    assert "전문 세탁" in first["care_guidance"][0]
+    assert not any("30" in line or "건조기를 쓰세요" in line for line in first["care_guidance"])
+    response = client.post(
+        "/api/analyze", files={"image": ("shirt.jpg", photo)}, data={"search_stage": "retry"},
+    )
     assert response.status_code == 200
     result = response.json()
     assert result["image_type"] == "garment"
@@ -132,12 +236,20 @@ def test_unmatched_garment_photo_requests_label_and_discards_guessed_settings(cl
     assert result["garment"]["product_code"]["status"] == "estimated"
     assert result["garment"]["brand"]["status"] == "needs_confirmation"
     assert result["care_guidance_source"] == "estimated"
-    assert result["care_guidance"] == ["물세탁이 가능한 옷이라면 밝은 옷과 분리해 세탁하세요."]
+    assert result["care_guidance"] == first["care_guidance"]
     assert result["product_care"] == {}
+    # A padded garment is not searched again, so no tag photo is requested.
     assert result["next_actions"] == ["capture_label", "manual_entry"]
     assert result["photo_request"]["image_type"] == "care_label"
-    assert "옆 솔기" in result["photo_request"]["instructions"]
-    assert "네모 모양의 건조 기호" in result["message"]
+    assert "충전재" in result["photo_request"]["instructions"]
+
+    search = LensWebSearch("test-key", httpx.MockTransport(lambda _: pytest.fail("Unexpected web search")))
+    app.dependency_overrides[get_lens_search] = lambda: search
+    estimate = client.post(
+        "/api/analyze", files={"image": ("shirt.jpg", photo)}, data={"search_stage": "estimate"},
+    ).json()
+    assert estimate["care_guidance"] == result["care_guidance"]
+    assert estimate["product_lookup"] is None
 
 
 def test_unconfirmed_product_requests_a_label_and_uses_it_for_care(client, photo):
@@ -163,10 +275,11 @@ def test_unconfirmed_product_requests_a_label_and_uses_it_for_care(client, photo
     assert data["product_lookup"]["candidates"] == []
     assert data["product_care"] == {}
     assert data["photo_request"]["image_type"] == "care_label"
+    assert "capture_label" in data["next_actions"]
 
     label = client.post(
         "/api/analyze", files={"image": ("label.jpg", photo)},
-        data={"image_type": data["photo_request"]["image_type"]},
+        data={"image_type": "care_label"},
     )
     assert label.status_code == 200
     assert label.json()["care_guidance_source"] == "care_label"
@@ -303,14 +416,13 @@ def test_temperature_with_conflicting_evidence_is_withheld(client, photo, value,
     assert "세탁 기호" in result["photo_request"]["instructions"]
 
 
-def test_unrelated_photo_requests_another_photo(client, photo):
+def test_unrelated_photo_requests_a_care_label(client, photo):
     mock_gemini(lambda _: gemini_result({"image_type": "unknown"}))
     response = client.post("/api/analyze", files={"image": ("other.jpg", photo)})
     assert response.status_code == 200
     result = response.json()
-    assert result["next_actions"] == ["retake_photo", "manual_entry"]
-    assert result["photo_request"]["image_type"] == "garment"
-    assert "앞면 전체" in result["photo_request"]["instructions"]
+    assert result["next_actions"] == ["capture_label", "manual_entry"]
+    assert result["photo_request"]["image_type"] == "care_label"
 
 
 def test_non_image_is_rejected_before_calling_gemini(client):
@@ -380,7 +492,13 @@ def test_registered_reference_photo_returns_official_care_without_gemini(client,
     assert result["product_lookup"]["product"]["source_url"].startswith("https://www.coor.kr/")
     assert result["product_care"]["wash_method"]["source"] == "official_product"
     assert result["product_care"]["tumble_dry_allowed"]["status"] == "needs_confirmation"
-    assert result["care_guidance"] == ["손세탁하세요.", "드라이클리닝도 가능해요.", "뒤집어서 세탁하는 방법은 권장하지 않아요."]
+    assert result["care_guidance"] == [
+        "손세탁하세요.", "드라이클리닝도 가능해요.", "뒤집어서 세탁하는 방법은 권장하지 않아요.",
+        # The published fiber content (cotton 100%) adds advice that the official page leaves out.
+        "소재 기준 권장: 면은 뜨거운 물에서 줄어들 수 있어요. 찬물이나 미지근한 물로 세탁하세요.",
+        "소재 기준 권장: 모양을 잡아 자연 건조하세요.",
+    ]
+    assert "소재를 바탕으로" in result["message"]
     assert result["care_guidance_source"] == "official_product"
     assert "건조 기호" in result["photo_request"]["instructions"]
 
@@ -436,7 +554,7 @@ def test_web_search_requires_a_catalog_reference_to_attach_care(client, photo, e
     else:
         assert result["product_lookup"]["status"] == "not_found"
         assert result["product_lookup"]["candidates"] == []
-        assert result["care_guidance"] == []
+        assert result["care_guidance_source"] == "estimated"
         assert result["product_care"] == {}
         assert result["photo_request"]["image_type"] == "care_label"
 
@@ -453,3 +571,563 @@ def test_web_search_failure_preserves_garment_analysis(client, photo):
     assert response.status_code == 200
     assert response.json()["garment"]["brand"]["value"] == "COOR"
     assert response.json()["product_lookup"]["status"] == "search_unavailable"
+
+
+def test_lens_returns_ranked_candidates_without_a_catalog(client, photo, monkeypatch, caplog):
+    mock_gemini(lambda _: gemini_result({"image_type": "garment", "garment": {
+        "brand": {"value": "Nike", "evidence": "스우시 로고"},
+    }}))
+    app.dependency_overrides[catalog.get_catalog] = lambda: None
+    requests = []
+    matches = [
+        {"title": "", "link": "https://example.com/untitled"},
+        {"title": "Invalid link", "link": "javascript:alert(1)"},
+        {"title": "Embedded credentials", "link": "https://a:b@example.com/item"},
+        {"title": "Nike printed crew-neck", "link": "https://example.com/nike-crew"},
+        {"title": "Duplicate", "link": "https://example.com/nike-crew"},
+        *[{"title": f"Result {i}", "link": f"https://example.com/items/{i}"} for i in range(6)],
+    ]
+
+    def handler(request):
+        if request.url.params.get("engine") == "google":
+            assert any(term in request.url.params["q"] for term in ("site:nike.com", '"care instructions"'))
+            return httpx.Response(200, json={"organic_results": []})
+        requests.append((request.method, request.url.path, request.url.params.get("type")))
+        assert request.url.host == "serpapi.com"
+        if request.method == "POST":
+            assert request.headers["content-type"].startswith("multipart/form-data;")
+            assert b'name="image"; filename="garment.jpg"' in request.content
+            assert b"image/jpeg" in request.content
+            assert b"lens-test-key" in request.content
+            return httpx.Response(200, json={"image_id": "test-upload-id"})
+        assert request.url.params["api_key"] == "lens-test-key"
+        assert request.url.params["image_id"] == "test-upload-id"
+        assert request.url.params["engine"] == "google_lens"
+        if request.url.params["type"] == "exact_matches":
+            return httpx.Response(200, json={"exact_matches": []})
+        assert request.url.params["type"] == "visual_matches"
+        assert request.url.params["auto_crop"] == "true"
+        return httpx.Response(200, json={"visual_matches": matches})
+
+    monkeypatch.setenv("SERPAPI_API_KEY", "lens-test-key")
+    monkeypatch.setattr(
+        image_router, "LensWebSearch", lambda key: LensWebSearch(key, httpx.MockTransport(handler)),
+    )
+    with caplog.at_level("INFO", logger="httpx"):
+        response = client.post("/api/analyze", files={"image": ("garment.jpg", photo)})
+
+    assert requests[0] == ("POST", "/image", None)
+    assert sorted(requests[1:]) == [
+        ("GET", "/search.json", "exact_matches"), ("GET", "/search.json", "visual_matches"),
+    ]
+    assert "serpapi.com/search.json" in caplog.text
+    assert "lens-test-key" not in caplog.text and "test-upload-id" not in caplog.text
+    assert response.status_code == 200
+    result = response.json()
+    assert result["status"] == "needs_confirmation"
+    lookup = result["product_lookup"]
+    assert lookup["status"] == "candidates"
+    assert lookup["product"] is None
+    assert [item["name"] for item in lookup["candidates"]] == [
+        "Nike printed crew-neck", "Result 0", "Result 1", "Result 2", "Result 3",
+    ]
+    assert lookup["candidates"][0]["source_url"] == "https://example.com/nike-crew"
+    assert result["product_care"] == {}
+    assert result["photo_request"]["image_type"] == "care_label"
+
+
+@pytest.mark.parametrize(("search_response", "expected"), [
+    ({"search_metadata": {"status": "Success"}, "error": "No results"}, "not_found"),
+    ({"search_metadata": {"status": "Error"}, "error": "Search failed"}, "search_unavailable"),
+])
+def test_lens_preserves_photo_analysis_when_no_matches(client, photo, search_response, expected):
+    mock_gemini(lambda _: gemini_result({"image_type": "garment", "garment": {
+        "brand": {"value": "Nike", "evidence": "스우시 로고"},
+    }}))
+
+    def handler(request):
+        payload = {"image_id": "test-id"} if request.method == "POST" else search_response
+        return httpx.Response(200, json=payload)
+
+    search = LensWebSearch("test-key", httpx.MockTransport(handler))
+    app.dependency_overrides[get_lens_search] = lambda: search
+    result = client.post("/api/analyze", files={"image": ("garment.jpg", photo)}).json()
+
+    assert result["garment"]["brand"]["value"] == "Nike"
+    assert result["product_lookup"]["status"] == expected
+    assert result["photo_request"]["image_type"] == "care_label"
+
+
+def test_lens_does_not_search_before_gemini_reads_the_garment(client, photo):
+    app.dependency_overrides[get_analyzer] = lambda: GeminiAnalyzer(api_key=None)
+
+    def handler(_):
+        pytest.fail("Gemini did not read the garment, so the product search must not start")
+
+    search = LensWebSearch("test-key", httpx.MockTransport(handler))
+    app.dependency_overrides[get_lens_search] = lambda: search
+    response = client.post("/api/analyze", files={"image": ("garment.jpg", photo)}, data={"image_type": "garment"})
+
+    assert response.status_code == 503
+    assert response.json()["detail"]["code"] == "analysis_unconfigured"
+
+
+@pytest.mark.parametrize("image_retrieved", [True, False])
+@pytest.mark.parametrize("retailer_candidate", [True, False])
+def test_lens_matches_an_uncatalogued_garment_using_retrieved_official_evidence(
+    client, photo, image_retrieved, retailer_candidate,
+):
+    page = "https://www.nike.com/kr/t/sweatshirt/XX1234-001"
+    retailer = "https://example.com/products/XX1234-001"
+    reference = "https://static.nike.com/product-reference.jpg"
+    def empty_catalog():
+        return []
+
+    app.dependency_overrides[catalog.get_catalog] = empty_catalog
+
+    def analyze(request):
+        payload = json.loads(request.content)
+        if "tools" not in payload:
+            return gemini_result({"image_type": "garment", "garment": {
+                "brand": {"value": "나이키", "evidence": "스우시"},
+            }})
+        assert payload["tools"] == [{"url_context": {}}]
+        context = json.loads(payload["contents"][0]["parts"][0]["text"])
+        assert context["references"][0]["page_url"] == page
+        reading = gemini_result({
+            "reference": 0, "match": "visual", "name": "나이키 프린트 스웻셔츠",
+            "color": "Dark Grey", "product_code": "XX1234-001",
+            **({"candidate_index": 0, "retailer_product_code": "XX1234-001"} if retailer_candidate else {}),
+            "visual_evidence": ["가슴의 반복 인쇄 패턴", "밑단 옆에 달린 직사각형 패치"],
+            "care": {
+                "wash_method": {"value": "machine_wash", "evidence": "Machine wash at 30°C"},
+                "max_wash_temperature_c": {"value": 30, "evidence": "Machine wash at 30°C"},
+                "tumble_dry_allowed": {"value": False, "evidence": "Do not tumble dry"},
+            },
+        }).json()
+        retrieved = [page, retailer] if retailer_candidate else [page]
+        if image_retrieved:
+            retrieved.append(reference)
+        reading["candidates"][0]["urlContextMetadata"] = {"urlMetadata": [
+            {"retrievedUrl": url, "urlRetrievalStatus": "URL_RETRIEVAL_STATUS_SUCCESS"}
+            for url in retrieved
+        ]}
+        return httpx.Response(200, json=reading)
+
+    def lens(request):
+        if request.method == "POST":
+            return httpx.Response(200, json={"image_id": "test-id"})
+        if request.url.params["engine"] == "google":
+            if '"care instructions"' in request.url.params["q"]:
+                return httpx.Response(200, json={"organic_results": []})
+            assert retailer_candidate and request.url.params["q"] == 'site:nike.com "XX1234-001"'
+            return httpx.Response(200, json={"organic_results": [{"title": "Nike", "link": page}]})
+        if request.url.params["type"] == "exact_matches":
+            return httpx.Response(200, json={"exact_matches": []})
+        return httpx.Response(200, json={"visual_matches": [
+            {"title": "Nike sweatshirt", "link": retailer if retailer_candidate else page, "image": reference},
+        ]})
+
+    mock_gemini(analyze)
+    search = LensWebSearch("test-key", httpx.MockTransport(lens))
+    app.dependency_overrides[get_lens_search] = lambda: search
+    response = client.post("/api/analyze", files={"image": ("garment.jpg", photo)})
+    assert response.status_code == 200
+    result = response.json()
+    if image_retrieved:
+        assert result["product_lookup"]["status"] == "matched"
+        assert result["product_lookup"]["product"]["source_url"] == page
+        assert result["product_care"]["max_wash_temperature_c"]["value"] == 30
+        assert result["care_guidance_source"] == "official_product"
+        assert result["photo_request"] is None
+    else:
+        assert result["product_lookup"]["status"] == "candidates"
+        assert result["product_care"] == {}
+        assert result["photo_request"]["image_type"] == "care_label"
+
+
+@pytest.mark.parametrize("image_retrieved", [True, False])
+@pytest.mark.parametrize("care_search_only", [False, True])
+def test_lens_reads_care_from_an_uncatalogued_retailer_product(client, photo, image_retrieved, care_search_only):
+    page = "https://www.29cm.co.kr/products/123456"
+    lens_page = "https://example.com/item/87654306" if care_search_only else page
+    reference = "https://img.29cm.co.kr/style-reference.jpg"
+
+    def empty_catalog():
+        return []
+
+    app.dependency_overrides[catalog.get_catalog] = empty_catalog
+
+    def analyze(request):
+        payload = json.loads(request.content)
+        if "tools" not in payload:
+            return gemini_result({"image_type": "garment", "garment": {
+                "brand": {"value": "푸마", "evidence": "Puma logo"},
+            }})
+        context = json.loads(payload["contents"][0]["parts"][0]["text"])
+        assert context["references"][0]["care_source"] == "product_listing"
+        assert context["search_candidates"][0]["exact_match"] is True
+        reading = gemini_result({
+            "reference": 0, "match": "visual", "name": "푸마 컬러블록 상의",
+            "brand": "PUMA", "color": "네이비", "product_code": "87654306",
+            **({"candidate_index": 0, "retailer_product_code": "87654306"} if care_search_only else {}),
+            "visual_evidence": ["소매의 삼각형 배색", "칼라에서 이어지는 흰색 파이핑"],
+            "care": {"dry_in_shade": {"value": True, "evidence": "Dry in shade"}},
+        }).json()
+        retrieved = [page, lens_page]
+        if image_retrieved:
+            retrieved.append(reference)
+        reading["candidates"][0]["urlContextMetadata"] = {"urlMetadata": [
+            {"retrievedUrl": url, "urlRetrievalStatus": "URL_RETRIEVAL_STATUS_SUCCESS"}
+            for url in retrieved
+        ]}
+        return httpx.Response(200, json=reading)
+
+    def lens(request):
+        if request.method == "POST":
+            return httpx.Response(200, json={"image_id": "test-id"})
+        if request.url.params["engine"] == "google":
+            query = request.url.params["q"]
+            assert '"87654306"' in query
+            matches = [{"title": "푸마 컬러블록 상의", "link": page}] if care_search_only and "세탁방법" in query else []
+            return httpx.Response(200, json={"organic_results": matches})
+        match = {"title": "푸마 컬러블록 상의 87654306", "link": lens_page, "thumbnail": reference}
+        return httpx.Response(200, json={request.url.params["type"]: [match]})
+
+    mock_gemini(analyze)
+    app.dependency_overrides[get_lens_search] = lambda: LensWebSearch("test-key", httpx.MockTransport(lens))
+    response = client.post("/api/analyze", files={"image": ("garment.jpg", photo)})
+    assert response.status_code == 200
+    result = response.json()
+    assert result["photo_request"]["image_type"] == "care_label"
+    if image_retrieved:
+        assert result["product_lookup"]["product"]["source_url"] == page
+        assert result["product_lookup"]["status"] == "matched"
+        assert result["care_guidance_source"] == "product_listing"
+        assert result["care_guidance"] == ["그늘에서 말리세요."]
+        assert result["product_care"]["wash_method"]["value"] is None
+    else:
+        assert result["product_lookup"]["status"] == "candidates"
+        assert result["product_care"] == {}
+
+
+@pytest.mark.parametrize("page_retrieved", [True, False])
+def test_lens_compares_the_search_photo_of_any_shop_page(client, photo, monkeypatch, page_retrieved):
+    page = "https://shop.example.com/goods/774"
+    thumbnail = "https://encrypted-tbn0.gstatic.com/images?q=tbn:test"
+    def empty_catalog():
+        return []
+
+    app.dependency_overrides[catalog.get_catalog] = empty_catalog
+
+    async def candidate_photos(candidates):
+        assert str(candidates[0].thumbnail_url) == thumbnail
+        return {catalog.official_url_key(candidates[0].source_url): photo}
+
+    def analyze(request):
+        payload = json.loads(request.content)
+        if "tools" not in payload:
+            return gemini_result({"image_type": "garment", "garment": {
+                "garment_type": {"value": "후드 집업", "evidence": "지퍼와 후드"},
+            }})
+        parts = payload["contents"][0]["parts"]
+        reference = json.loads(parts[0]["text"])["references"][0]
+        assert reference["page_url"] == page and reference["has_inline_photo"]
+        assert parts[-2]["text"] == "Product page reference photo 0"
+        assert base64.b64decode(parts[-1]["inlineData"]["data"]) == photo
+        reading = gemini_result({
+            "reference": 0, "match": "visual", "brand": "Example", "name": "후드 집업 재킷", "color": "블루",
+            "visual_evidence": ["같은 사진", "가슴의 지퍼 포켓"],
+            "care": {"wash_method": {"value": "hand_wash", "evidence": "손세탁"}},
+        }).json()
+        reading["candidates"][0]["urlContextMetadata"] = {"urlMetadata": [
+            {"retrievedUrl": page, "urlRetrievalStatus": "URL_RETRIEVAL_STATUS_SUCCESS"},
+        ] if page_retrieved else []}
+        return httpx.Response(200, json=reading)
+
+    def lens(request):
+        if request.method == "POST":
+            return httpx.Response(200, json={"image_id": "test-id"})
+        if request.url.params["engine"] == "google":
+            return httpx.Response(200, json={"organic_results": []})
+        match = {"title": "후드 집업 재킷", "link": page, "image": "https://shop.example.com/774.jpg",
+                 "thumbnail": thumbnail}
+        return httpx.Response(200, json={request.url.params["type"]: [match]})
+
+    monkeypatch.setattr(official_product, "read_candidate_photos", candidate_photos)
+    mock_gemini(analyze)
+    app.dependency_overrides[get_lens_search] = lambda: LensWebSearch("test-key", httpx.MockTransport(lens))
+    result = client.post("/api/analyze", files={"image": ("garment.jpg", photo)}).json()
+
+    if page_retrieved:
+        assert result["product_lookup"]["status"] == "matched"
+        assert result["product_lookup"]["product"]["source_url"] == page
+        assert result["care_guidance_source"] == "product_listing"
+        assert result["care_guidance"] == ["손세탁하세요."]
+    else:
+        # The matched search photo identifies the product, but care from an unread page is discarded.
+        assert result["product_lookup"]["status"] == "matched"
+        assert result["product_lookup"]["product"]["source_url"] == page
+        assert result["care_guidance_source"] == "estimated"
+        # The label is requested once, by the photo request. The tips do not repeat it.
+        assert result["care_guidance"] and not any("라벨" in line for line in result["care_guidance"])
+        assert result["product_care"]["wash_method"]["value"] is None
+        assert result["photo_request"]["image_type"] == "care_label"
+
+
+@pytest.mark.parametrize("published_care", [True, False])
+def test_photo_analysis_precedes_search_and_product_verification(client, photo, monkeypatch, published_care):
+    page = "https://shop.example.com/goods/774"
+    requests = []
+
+    def empty_catalog():
+        return []
+
+    app.dependency_overrides[catalog.get_catalog] = empty_catalog
+
+    async def candidate_photos(candidates):
+        return {catalog.official_url_key(candidates[0].source_url): photo}
+
+    garment = {"image_type": "garment", "garment": {
+        "garment_type": {"value": "후드 집업", "evidence": "지퍼와 후드"},
+        "brand": {"value": "Example", "evidence": "가슴 로고"},
+    }}
+    product = {
+        "reference": 0, "match": "visual", "brand": "EXAMPLE", "name": "후드 집업 재킷", "color": "블루",
+        "visual_evidence": ["같은 사진", "가슴의 지퍼 포켓"],
+        "care": {
+            "fiber_content": {"value": "면 100%", "evidence": "면 100%"},
+            "wash_method": {"value": "machine_wash", "evidence": "세탁기 사용 가능"},
+            "bleach": {"value": "표백 금지", "evidence": "Do not iron print"},
+        },
+        "material_tips": {"washing": "mesh_bag", "drying": "dry_in_shade"},
+    }
+    if not published_care:
+        product["care"].pop("wash_method")
+
+    def analyze(request):
+        payload = json.loads(request.content)
+        if "tools" not in payload:
+            requests.append("photo")
+            return gemini_result(garment)
+        requests.append("product")
+        context = json.loads(payload["contents"][0]["parts"][0]["text"])
+        # The search ran before the photo was read, so it had no clues from the photo.
+        assert context["garment_clues"] is None
+        reading = gemini_result(product).json()
+        reading["candidates"][0]["urlContextMetadata"] = {"urlMetadata": [
+            {"retrievedUrl": page, "urlRetrievalStatus": "URL_RETRIEVAL_STATUS_SUCCESS"},
+        ]}
+        return httpx.Response(200, json=reading)
+
+    def lens(request):
+        if request.method == "POST":
+            requests.append("search")
+            return httpx.Response(200, json={"image_id": "test-id"})
+        if request.url.params["engine"] == "google":
+            return httpx.Response(200, json={"organic_results": []})
+        match = {"title": "Example 후드 집업 재킷", "link": page, "thumbnail": "https://encrypted-tbn0.gstatic.com/images?q=t"}
+        return httpx.Response(200, json={request.url.params["type"]: [match]})
+
+    monkeypatch.setattr(official_product, "read_candidate_photos", candidate_photos)
+    mock_gemini(analyze)
+    app.dependency_overrides[get_lens_search] = lambda: LensWebSearch("test-key", httpx.MockTransport(lens))
+    result = client.post("/api/analyze", files={"image": ("garment.jpg", photo)}).json()
+
+    # One model request reads the photo and identifies the product after the image search.
+    assert requests == ["search", "photo", "product"] and GEMINI_REQUESTS == ["combined"]
+    assert result["garment"]["garment_type"]["value"] == "후드 집업"
+    assert result["product_lookup"]["status"] == "matched"
+    assert result["product_lookup"]["product"]["source_url"] == page
+    assert result["care_guidance_source"] == ("product_listing" if published_care else "material_estimate")
+    assert result["care_guidance"] == [
+        *(["세탁기로 세탁할 수 있어요."] if published_care else []),
+        "소재 기준 권장: " + ("" if published_care else "라벨에서 세탁기 사용을 허용하면 ")
+        + "세탁망에 넣어 다른 옷과의 마찰을 줄여 주세요.",
+        "소재 기준 권장: 직사광선을 피해 그늘에서 말리세요.",
+    ]
+    assert result["product_care"]["dry_in_shade"]["status"] == "needs_confirmation"
+    assert result["product_care"]["bleach"]["status"] == "needs_confirmation"
+
+
+@pytest.mark.parametrize(("page_brand", "matched"), [("디스커버리 익스페디션", True), ("아디다스", False)])
+def test_shop_brand_written_in_korean_matches_the_latin_logo(client, photo, monkeypatch, page_brand, matched):
+    page = "https://www.musinsa.com/products/5560241"
+    resale = [f"https://resale{index}.example.com/goods/1" for index in range(9)]
+    def empty_catalog():
+        return []
+
+    app.dependency_overrides[catalog.get_catalog] = empty_catalog
+
+    async def candidate_photos(candidates):
+        # The shop page ranks below the first eight results and still needs its photo.
+        assert str(candidates[-1].source_url) == page
+        return {catalog.official_url_key(item.source_url): photo for item in candidates}
+
+    def analyze(request):
+        payload = json.loads(request.content)
+        if "tools" not in payload:
+            return gemini_result({"image_type": "garment", "garment": {
+                "garment_type": {"value": "후드 재킷", "evidence": "후드와 지퍼"},
+                "brand": {"value": "Discovery Expedition", "evidence": "밑단 로고"},
+                "color": {"value": "블랙", "evidence": "검은색 겉감"},
+            }})
+        references = json.loads(payload["contents"][0]["parts"][0]["text"])["references"]
+        # A known shop's product page precedes resale listings.
+        assert references[0]["page_url"] == page and references[0]["has_inline_photo"]
+        return gemini_result({
+            "reference": 0, "match": "visual", "brand": page_brand, "name": "남성 후드 재킷",
+            "visual_evidence": ["밑단의 같은 로고 위치", "같은 후드 스트링 구조"],
+        })
+
+    def lens(request):
+        if request.method == "POST":
+            return httpx.Response(200, json={"image_id": "test-id"})
+        if request.url.params["engine"] == "google":
+            return httpx.Response(200, json={"organic_results": []})
+        if request.url.params["type"] == "exact_matches":
+            return httpx.Response(200, json={"exact_matches": []})
+        return httpx.Response(200, json={"visual_matches": [
+            *({"title": "중고 후드 재킷", "link": link, "thumbnail": "https://encrypted-tbn0.gstatic.com/images?q=r"}
+              for link in resale),
+            {"title": "남성 후드 재킷 - 사이즈 & 후기 | 무신사", "link": page,
+             "image": "https://image.msscdn.net/images/goods_img/5560241_big.jpg"},
+        ]})
+
+    monkeypatch.setattr(official_product, "read_candidate_photos", candidate_photos)
+    mock_gemini(analyze)
+    app.dependency_overrides[get_lens_search] = lambda: LensWebSearch("test-key", httpx.MockTransport(lens))
+    result = client.post("/api/analyze", files={"image": ("garment.jpg", photo)}).json()
+
+    if matched:
+        assert result["product_lookup"]["status"] == "matched"
+        assert result["product_lookup"]["product"]["source_url"] == page
+        assert result["product_lookup"]["product"]["brand"] == page_brand
+    else:
+        assert result["product_lookup"]["status"] == "candidates"
+
+
+def test_lens_uses_official_puma_variant_photo_and_published_care(client, photo, monkeypatch):
+    canonical_url = HttpUrl("https://th.puma.com/th/en/pd/example/812345.html?dwvar_812345_color=01")
+
+    async def read_puma_page(_, url):
+        assert url.path == "/th/en/pd/812345.html" and url.query == "dwvar_812345_color=01"
+        return ProductPage(canonical_url, "Style: 812345_01. Wash and iron inside out.", "81234501", photo)
+
+    def analyze(request):
+        payload = json.loads(request.content)
+        if not payload["systemInstruction"]["parts"][0]["text"].startswith("Identify the exact product"):
+            return gemini_result({"image_type": "garment", "garment": {
+                "brand": {"value": "푸마", "evidence": "로고"},
+            }})
+        # The server supplied the text and photo of the only page, so the model opens no page.
+        assert "tools" not in payload
+        parts = payload["contents"][0]["parts"]
+        reference = json.loads(parts[0]["text"])["references"][0]
+        assert reference["page_url"] == str(canonical_url) and reference["has_inline_photo"]
+        assert base64.b64decode(parts[-1]["inlineData"]["data"]) == photo
+        return gemini_result({
+            "reference": 0, "match": "visual", "name": "푸마 상의", "color": "블랙", "product_code": "812345-01",
+            "visual_evidence": ["동일한 프린트 위치", "동일한 이중 봉제"],
+            "care": {"wash_method": {"value": "machine_wash", "evidence": "Machine wash"}},
+            "care_notes": [
+                {"value": "뒤집어서 세탁하세요.", "evidence": "Wash and iron inside out"},
+                {"value": "중성 세제를 쓰세요.", "evidence": "Use a mild detergent"},
+            ],
+        })
+
+    def search(request):
+        if request.method == "POST":
+            return httpx.Response(200, json={"image_id": "test-id"})
+        if request.url.params["engine"] == "google":
+            return httpx.Response(200, json={"organic_results": []})
+        return httpx.Response(200, json={request.url.params["type"]: [
+            {"title": "푸마 상의 812345-01", "link": "https://example.com/products/1"},
+        ]})
+
+    monkeypatch.setattr(official_product, "read_product_page", read_puma_page)
+    mock_gemini(analyze)
+    app.dependency_overrides[get_lens_search] = lambda: LensWebSearch("test-key", httpx.MockTransport(search))
+    response = client.post("/api/analyze", files={"image": ("garment.jpg", photo)})
+    assert response.status_code == 200
+    result = response.json()
+    assert result["product_lookup"]["status"] == "matched"
+    assert result["product_lookup"]["product"]["source_url"] == str(canonical_url)
+    assert result["care_guidance_source"] == "official_product"
+    assert result["care_guidance"] == ["뒤집어서 세탁하세요."]
+    assert result["product_care"]["wash_method"]["value"] is None
+
+
+@pytest.mark.parametrize("details", [["hem badge", "geometric print"], ["Nike logo"]])
+def test_search_verifies_catalog_photo_before_showing_saved_official_care(client, photo, monkeypatch, details):
+    reference = next(entry for entry in catalog.load_catalog() if entry.product.product_code == "HV4119-254")
+    app.dependency_overrides[catalog.get_catalog] = lambda: [reference]
+
+    async def read_image(_, entry):
+        assert entry == reference
+        return photo
+
+    monkeypatch.setattr(catalog_photo, "read_reference_image", read_image)
+
+    def analyze(request):
+        payload = json.loads(request.content)
+        if payload["systemInstruction"]["parts"][0]["text"].startswith("Identify the exact product"):
+            parts = payload["contents"][0]["parts"]
+            listed = json.loads(parts[0]["text"])["references"][0]
+            # The registered photo of the catalog product is supplied next to the upload.
+            assert listed["catalog_id"] == reference.product.id and listed["has_inline_photo"]
+            assert len([part for part in parts if "inlineData" in part]) == 2
+            return gemini_result({
+                "reference": 0, "match": "visual", "name": reference.product.name, "visual_evidence": details,
+            })
+        return gemini_result({"image_type": "garment", "garment": {
+            "brand": {"value": "Nike", "evidence": "스우시"},
+        }})
+
+    def search(request):
+        if request.method == "POST":
+            return httpx.Response(200, json={"image_id": "test-id"})
+        if request.url.params["engine"] == "google":
+            return httpx.Response(200, json={"organic_results": []})
+        return httpx.Response(200, json={request.url.params["type"]: [
+            {"title": "Nike crew HV4119-254", "link": "https://example.com/products/123"},
+        ]})
+
+    mock_gemini(analyze)
+    app.dependency_overrides[get_lens_search] = lambda: LensWebSearch("test-key", httpx.MockTransport(search))
+    response = client.post("/api/analyze", files={"image": ("photo.jpg", photo)})
+    assert response.status_code == 200
+    result = response.json()
+    assert result["photo_request"]["image_type"] == "care_label"
+    if len(details) == 2:
+        assert result["product_lookup"]["product"]["product_code"] == "HV4119-254"
+        assert result["care_guidance_source"] == "official_product"
+        assert result["product_care"]["wash_method"]["value"] == "machine_wash"
+        assert result["product_care"]["max_wash_temperature_c"]["value"] is None
+    else:
+        assert result["product_lookup"]["status"] == "candidates"
+        assert result["product_care"] == {}
+
+
+def test_official_lookup_quota_is_explained_in_the_photo_response(client, photo):
+    def analyze(request):
+        if "tools" in json.loads(request.content):
+            return httpx.Response(429)
+        return gemini_result({"image_type": "garment", "garment": {
+            "brand": {"value": "Nike", "evidence": "NIKE"},
+            "product_code": {"value": "TEST-001", "evidence": "STYLE TEST-001"},
+        }})
+
+    mock_gemini(analyze)
+    app.dependency_overrides[get_lens_search] = lambda: LensWebSearch("test-key", httpx.MockTransport(
+        lambda request: httpx.Response(200, json={"image_id": "test-id"} if request.method == "POST" else {
+            key: [{"title": "Nike", "link": "https://www.nike.com/t/example/TEST-001"}]
+            for key in ("organic_results", "visual_matches", "exact_matches")
+        }),
+    ))
+    response = client.post("/api/analyze", files={"image": ("tag.jpg", photo)})
+    assert response.status_code == 200
+    result = response.json()
+    assert "사용량 제한" in result["search_warning"]
+    assert result["search_warning"] in result["message"]
+    assert result["product_care"] == {}

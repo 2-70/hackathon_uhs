@@ -175,6 +175,7 @@ export async function analyzePhoto(kind: 'clothing' | 'label', uri: string): Pro
 
 type Setting = Course['settings'][number] & { course: Course };
 type ColorFamily = 'light' | 'dark' | 'unknown';
+const washStrengthRank = { very_gentle: 0, gentle: 1, normal: 2 } as const;
 
 function colorFamily(color: string): ColorFamily {
   const normalized = color.trim().toLowerCase();
@@ -192,15 +193,23 @@ function getExclusionReason(garment: Garment): string | undefined {
   if (garment.wash === 'hand') return '손세탁이 필요한 의류예요.';
   if (garment.wash === 'unknown') return '기계세탁 가능 여부를 확인해 주세요.';
   if (garment.maxTemp === null) return '최대 세탁 온도를 확인해 주세요.';
-  if (garment.gentle === null) return '약한 세탁이 필요한지 확인해 주세요.';
+  if (garment.gentle === null && !garment.washStrength) return '약한 세탁이 필요한지 확인해 주세요.';
   return undefined;
+}
+
+function permitsWashStrength(garment: Garment, { course, temp, spin }: Setting) {
+  const verified = course.verifiedSettings?.find((option) => option.temperatureCelsius === temp && option.spinRpm === spin);
+  const strength = verified?.washStrength ?? (course.gentle ? 'gentle' : 'normal');
+  const limit = garment.washStrength ?? (garment.gentle ? 'gentle' : 'normal');
+  return washStrengthRank[strength] <= washStrengthRank[limit];
 }
 
 function isCompatible(garment: Garment, setting: Setting): boolean {
   return (
     garment.maxTemp !== null &&
     setting.temp <= garment.maxTemp &&
-    (!garment.gentle || setting.course.gentle)
+    (garment.maxSpin == null || setting.spin <= garment.maxSpin) &&
+    permitsWashStrength(garment, setting)
   );
 }
 
@@ -292,7 +301,10 @@ export async function validateSettings(
     if (garment.maxTemp !== null && temp > garment.maxTemp) {
       reasons.push(`${garment.name}의 최대 세탁 온도는 ${garment.maxTemp}°C예요.`);
     }
-    if (garment.gentle && !course.gentle) {
+    if (garment.maxSpin != null && spin > garment.maxSpin) {
+      reasons.push(`${garment.name}의 최대 탈수 속도는 ${garment.maxSpin} rpm이에요.`);
+    }
+    if (!permitsWashStrength(garment, { course, temp, spin })) {
       reasons.push(`${garment.name}에는 약한 세탁 코스가 필요해요.`);
     }
   }

@@ -21,7 +21,11 @@ from fastapi import (
 from PIL import Image, ImageOps
 from starlette.concurrency import run_in_threadpool
 
-from .analysis import format_analysis
+from .analysis import (
+    format_analysis,
+    home_wash_unsuitable,
+    request_care_label_for_unmatched_product,
+)
 from .catalog import (
     CatalogProduct,
     attach_product,
@@ -32,10 +36,24 @@ from .catalog import (
     match_reference_photo,
     match_web_image,
 )
-from .gemini import DEFAULT_MODEL, FALLBACK_MODEL, GeminiAnalyzer, GeminiError, create_gemini_client
+from .gemini import (
+    DEFAULT_MODEL,
+    FALLBACK_MODEL,
+    GeminiAnalyzer,
+    GeminiError,
+    configured_gemini_keys,
+    create_gemini_client,
+)
+from .lens import LensWebSearch
+from .official_product import (
+    OfficialLookupUnavailable,
+    confirm_product,
+    read_photo_and_product,
+)
 from .schemas import (
     AnalysisResponse,
     GarmentReadings,
+    GarmentSearchStage,
     PhotoReadings,
     ProductCareResponse,
     ProductLookup,
@@ -87,8 +105,10 @@ IMAGE_MIME_TYPES = {"JPEG": "image/jpeg", "PNG": "image/png", "WEBP": "image/web
 
 def get_analyzer(request: Request) -> GeminiAnalyzer:
     model = os.getenv("GEMINI_MODEL") or DEFAULT_MODEL
+    keys = configured_gemini_keys()
     return GeminiAnalyzer(
-        api_key=os.getenv("GEMINI_API_KEY"),
+        api_key=keys[0] if keys else None,
+        backup_keys=keys[1:],
         model=model,
         client=getattr(request.state, "washwise_gemini_client", None),
         fallback_model=FALLBACK_MODEL if model == DEFAULT_MODEL else None,
@@ -98,6 +118,11 @@ def get_analyzer(request: Request) -> GeminiAnalyzer:
 def get_web_search() -> VisionWebSearch | None:
     api_key = os.getenv("GOOGLE_CLOUD_VISION_API_KEY")
     return VisionWebSearch(api_key) if api_key else None
+
+
+def get_lens_search() -> LensWebSearch | None:
+    api_key = os.getenv("SERPAPI_API_KEY", "").strip()
+    return LensWebSearch(api_key) if api_key else None
 
 
 @router.post("/products/match", response_model=ProductLookup, responses={503: {"model": ProductLookup}})
@@ -181,8 +206,10 @@ async def analyze_photo(
     image: Annotated[UploadFile, File(description="의류 또는 세탁 라벨 사진")],
     analyzer: Annotated[GeminiAnalyzer, Depends(get_analyzer)],
     web_search: Annotated[VisionWebSearch | None, Depends(get_web_search)],
+    lens_search: Annotated[LensWebSearch | None, Depends(get_lens_search)],
     entries: Catalog,
     image_type: Annotated[RequestedPhotoType, Form(description="사진의 종류")] = "auto",
+    search_stage: Annotated[GarmentSearchStage, Form(description="의류 검색 단계")] = "initial",
 ) -> AnalysisResponse:
     try:
         # Avoid loading oversized uploads from the temporary file into memory.
@@ -197,18 +224,38 @@ async def analyze_photo(
         )
 
     prepared_image, mime_type = await run_in_threadpool(prepare_image, data, image_type)
-    reference_product = match_reference_photo(data, entries) if entries and image_type != "care_label" else None
-    if reference_product:
-        return attach_product(reference_product, "reference_photo")
-
     cache: PhotoReadingsCache | None = getattr(request.state, "washwise_photo_cache", None)
     cache_key = (analyzer.model, image_type, sha256(data).digest())
     cached_readings = cache.get(cache_key) if cache is not None else None
     readings = cached_readings
+    # A garment photo is searched first, so one model request can read the photo and identify the product.
+    single_request = (
+        lens_search is not None and image_type != "care_label" and search_stage != "estimate" and bool(analyzer.api_key)
+    )
+    candidates, combined, search_failed, lookup_warning = [], None, False, None
+    if single_request:
+        if entries and (entry := match_reference_photo(data, entries)):
+            return attach_product(entry, "reference_photo")
+        try:
+            candidates = await lens_search.search(prepared_image)
+        except WebSearchUnavailable:
+            search_failed = True
+        if candidates:
+            try:
+                combined = await read_photo_and_product(
+                    analyzer, prepared_image, mime_type, image_type, candidates, entries or (), lens_search,
+                )
+            except OfficialLookupUnavailable as error:
+                # The photo alone is read below, so the user still gets the garment and a label request.
+                lookup_warning = str(error)
+        if combined:
+            readings = combined[0]
     if readings is None:
         try:
             readings = await analyzer.analyze(prepared_image, mime_type, image_type)
         except GeminiError as error:
+            if entries and image_type != "care_label" and (entry := match_reference_photo(data, entries)):
+                return attach_product(entry, "reference_photo")
             raise HTTPException(
                 error.status_code, detail={"code": error.code, "message": str(error)}
             ) from None
@@ -222,16 +269,43 @@ async def analyze_photo(
     if result.image_type != "garment":
         return result
 
-    if entries is None:
-        result.product_lookup = ProductLookup(status="search_unavailable")
+    garment = readings.garment or GarmentReadings()
+    if entries:
+        if entry := match_reference_photo(data, entries):
+            return attach_product(entry, "reference_photo", result)
+        coded_product = match_photo_product_code(garment, entries)
+        if coded_product:
+            return attach_product(coded_product, "product_code", result)
+    if search_stage == "estimate":
         return result
-    coded_product = match_photo_product_code(readings.garment or GarmentReadings(), entries)
-    if coded_product:
-        return attach_product(coded_product, "product_code", result)
-    result.product_lookup = ProductLookup(status="not_found")
-    if web_search is not None:
-        return await lookup_web_product(result, prepared_image, web_search, entries)
-    return result
+    kind = " ".join(field.value for field in (garment.garment_type, garment.product_name) if field)
+    if home_wash_unsuitable(kind):
+        # The kind of garment is judged first. One that is not washed at home needs no product search.
+        label = garment.garment_type.value if garment.garment_type else "이 옷"
+        result.message = (
+            f"{label}처럼 집에서 세탁하기 어려운 옷은 상품 검색 없이 전문 세탁을 권장해요. "
+            f"{result.photo_request.instructions}"
+        )
+        return result
+
+    result.product_lookup = ProductLookup(status="search_unavailable" if entries is None else "not_found")
+    if lens_search is None and web_search is None:
+        result.search_warning = "상품 검색이 연결되지 않았어요."
+    if single_request:
+        if search_failed:
+            result.product_lookup = ProductLookup(status="search_unavailable")
+        if combined:
+            _, prepared, product_reading, retrieved = combined
+            if official := confirm_product(prepared, product_reading, retrieved, garment, entries or ()):
+                return attach_product(*official, result)
+        result.search_warning = lookup_warning
+        if candidates:
+            result.product_lookup = ProductLookup(status="candidates", candidates=candidates[:5])
+    if web_search is not None and entries and result.product_lookup.status != "matched":
+        result = await lookup_web_product(result, prepared_image, web_search, entries)
+    if result.product_lookup and result.product_lookup.status == "matched":
+        return result
+    return request_care_label_for_unmatched_product(result)
 
 
 async def lookup_web_product(
@@ -241,7 +315,8 @@ async def lookup_web_product(
     try:
         web = await web_search.search(image)
     except WebSearchUnavailable:
-        result.product_lookup = ProductLookup(status="search_unavailable")
+        if result.product_lookup is None or result.product_lookup.status != "candidates":
+            result.product_lookup = ProductLookup(status="search_unavailable")
         return result
 
     reference_product = match_web_image(web.full_image_urls(), entries)

@@ -12,7 +12,7 @@ from backend.app.api.schemas import (
     MachineModelSummary,
 )
 from backend.app.core.errors import ApiError
-from backend.app.db.models import MachineCourse, MachineModel
+from backend.app.db.models import CatalogModel, MachineCourse, MachineModel
 
 router = APIRouter(
     prefix="/api/machines",
@@ -26,6 +26,7 @@ def list_machine_models(
     db: DbSession,
     query: str | None = Query(default=None, min_length=1, max_length=100),
     machine_type: str | None = Query(default=None, min_length=1, max_length=40),
+    include_catalog: bool = True,
 ) -> list[MachineModel]:
     """제조사·모델명 또는 기기 종류로 공용 모델을 검색합니다."""
 
@@ -44,6 +45,11 @@ def list_machine_models(
     # washer 같은 종류 필터는 검색 결과를 모바일 선택 UI에 맞게 줄입니다.
     if machine_type:
         statement = statement.where(MachineModel.machine_type == machine_type)
+    if not include_catalog:
+        catalog_match = select(CatalogModel.id).where(
+            CatalogModel.catalog_key == MachineModel.machine_key
+        ).exists()
+        statement = statement.where(~catalog_match)
     # 공식 모델은 공용 데이터이므로 소유자 조건 없이 읽습니다.
     return list(db.scalars(statement).all())
 

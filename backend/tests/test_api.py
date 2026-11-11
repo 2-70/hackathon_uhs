@@ -1,8 +1,12 @@
 """핵심 API 흐름을 HTTP 수준에서 검증합니다."""
 
+from base64 import b64encode
+from io import BytesIO
+
+from PIL import Image
 from sqlalchemy import select
 
-from backend.app.db.models import MachineModel
+from backend.app.db.models import MachineModel, WardrobeItem
 from backend.seed.load_verified import load_seed_data
 
 
@@ -106,6 +110,49 @@ def test_invalid_wardrobe_input_uses_common_error(client):
     # 앱이 분기할 수 있는 안정적인 오류 코드를 확인합니다.
     assert response.json()["error"]["code"] == "INVALID_INPUT"
     assert response.json()["error"]["details"]["fields"]
+
+
+def test_wardrobe_photos_are_persisted_and_replaced_atomically(client, db_session):
+    def photo(color):
+        output = BytesIO()
+        Image.new("RGB", (8, 10), color).save(output, "PNG")
+        return b64encode(output.getvalue()).decode()
+
+    create = client.post("/api/wardrobe", json={
+        "item_name": "흰 셔츠", "photos": {"clothing": photo("white"), "label": photo("blue")},
+    })
+    assert create.status_code == 201
+    path = f"/api/wardrobe/{create.json()['id']}"
+    assert create.json()["photo_kinds"] == ["clothing", "label"]
+    wardrobe = client.get("/api/wardrobe").json()
+    assert wardrobe[0]["photo_kinds"] == ["clothing", "label"]
+    assert "photos" not in wardrobe[0]
+
+    clothing = client.get(f"{path}/photos/clothing")
+    label = client.get(f"{path}/photos/label")
+    assert clothing.headers["content-type"] == label.headers["content-type"] == "image/jpeg"
+    assert clothing.content != label.content
+    assert Image.open(BytesIO(label.content)).size == (8, 10)
+
+    invalid = client.patch(path, json={"item_name": "변경", "photos": {"label": "invalid"}})
+    assert invalid.status_code == 422
+    assert invalid.json()["error"]["code"] == "INVALID_WARDROBE_PHOTO"
+    assert client.get(path).json()["item_name"] == "흰 셔츠"
+    assert client.get(f"{path}/photos/label").content == label.content
+
+    updated = client.patch(path, json={"photos": {"label": photo("red")}})
+    assert updated.status_code == 200
+    assert updated.json()["photo_kinds"] == ["clothing", "label"]
+    assert client.get(f"{path}/photos/label").content != label.content
+    assert client.get(f"{path}/photos/clothing").content == clothing.content
+
+    other = WardrobeItem(owner_id="another-owner", item_name="다른 옷", clothing_photo=clothing.content)
+    db_session.add(other)
+    db_session.commit()
+    assert client.get(f"/api/wardrobe/{other.id}/photos/clothing").status_code == 404
+
+    assert client.delete(path).status_code == 200
+    assert client.get(f"{path}/photos/label").status_code == 404
 
 
 def test_machine_courses_only_return_verified_combinations(client, db_session):

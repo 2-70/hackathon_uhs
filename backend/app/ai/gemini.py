@@ -1,8 +1,13 @@
 import asyncio
 import base64
 import logging
+import os
 import random
+import re
 from contextlib import nullcontext
+from datetime import datetime, timedelta, timezone
+from time import monotonic
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import httpx
 
@@ -10,10 +15,40 @@ from .schemas import CareLabelPhotoReadings, GarmentPhotoReadings, PhotoReadings
 
 DEFAULT_MODEL = "gemini-3.6-flash"
 FALLBACK_MODEL = "gemini-3.5-flash"
+QUOTA_FALLBACK_MODEL = "gemini-3-flash-preview"
+QUOTA_FALLBACK_MODELS = [QUOTA_FALLBACK_MODEL, "gemini-3.5-flash-lite"]
+QUOTA_SPENT_UNTIL: dict[tuple[str | None, str], float] = {}
+# A model that answered 503 stays overloaded for a while. Requests skip it during this time.
+MODEL_BUSY_UNTIL: dict[str, float] = {}
+MODEL_BUSY_SECONDS = 180
+
+
+def quota_pause_seconds(response: httpx.Response) -> float:
+    """How long a key stays out of quota for a model: a minute for a per-minute limit, else until the daily reset."""
+    if re.search(r"per\s*_?minute", response.text, re.IGNORECASE):
+        return 60
+    # Daily request limits reset at midnight Pacific time.
+    try:
+        now = datetime.now(ZoneInfo("America/Los_Angeles"))
+    except ZoneInfoNotFoundError:
+        now = datetime.now(timezone(timedelta(hours=-8)))
+    midnight = (now + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+    return (midnight - now).total_seconds()
+
+
+def available_model(preferred: str, fallback: str | None) -> str:
+    """The preferred model, or the fallback while only the preferred one is known to be overloaded."""
+    now = monotonic()
+    if fallback and fallback != preferred and MODEL_BUSY_UNTIL.get(preferred, 0) > now >= MODEL_BUSY_UNTIL.get(fallback, 0):
+        return fallback
+    return preferred
+
+
 THINKING_LEVEL_BY_MODEL = {
     DEFAULT_MODEL: "minimal",
     FALLBACK_MODEL: "minimal",
     "gemini-3.8-flash": "low",
+    QUOTA_FALLBACK_MODEL: "low",
 }
 MAX_ATTEMPTS = 3
 TOTAL_TIMEOUT_SECONDS = 100
@@ -27,10 +62,12 @@ Omit absent, ambiguous, contradictory, or unreadable fields. Infer no care rule 
 """
 
 GARMENT_INSTRUCTION = """Describe visible garment type, color and pattern in Korean.
-Copy brand, name and code as printed. An identifiable logo may support brand only.
-Never infer a product identity, fiber content, or care settings from appearance.
-For photo_care use only separate_dark_colors for mostly dark garments or similar_colors
-for other clear colors. Omit it if the garment or color is unclear.
+Accept a garment photo or a close-up of its brand and style tag. Copy brand, name and code as
+printed. An identifiable logo may support brand only. A garment tag with readable product
+identifiers and no readable care instructions can be classified as garment.
+Describe visibly padded outerwear as 패딩, 푸퍼, or 퀼팅 재킷 as appropriate. Do not identify the
+filling from appearance. These clues are used for a subsequent product search. Do not guess a
+product identity, material, washing, drying, or other care from appearance. Omit photo_care.
 """
 
 LABEL_INSTRUCTION = """Copy readable care text verbatim in label_text and read fiber names and percentages.
@@ -110,6 +147,11 @@ def create_gemini_client(transport: httpx.AsyncBaseTransport | None = None) -> h
     )
 
 
+def configured_gemini_keys() -> tuple[str, ...]:
+    values = [os.getenv("GEMINI_API_KEY", ""), *os.getenv("GEMINI_API_KEYS", "").split(",")]
+    return tuple(dict.fromkeys(key.strip() for key in values if key.strip()))
+
+
 class GeminiAnalyzer:
     def __init__(
         self,
@@ -119,12 +161,79 @@ class GeminiAnalyzer:
         *,
         client: httpx.AsyncClient | None = None,
         fallback_model: str | None = None,
+        backup_keys: tuple[str, ...] = (),
     ) -> None:
-        self.api_key = api_key.strip() if api_key else None
+        self._keys = tuple(dict.fromkeys(key.strip() for key in (api_key, *backup_keys) if key and key.strip()))
+        self._key_index = 0
+        self._timeout = httpx.USE_CLIENT_DEFAULT
         self.model = model
         self.transport = transport
         self.client = client
         self.fallback_model = fallback_model
+
+    @property
+    def api_key(self) -> str | None:
+        return self._keys[self._key_index] if self._keys else None
+
+    async def generate_content(
+        self, client: httpx.AsyncClient, model: str, payload: dict, *, read_timeout: float | None = None,
+    ) -> httpx.Response:
+        # Reading several product pages can take longer than a single photo.
+        self._timeout = httpx.Timeout(read_timeout, connect=10) if read_timeout else httpx.USE_CLIENT_DEFAULT
+        # Every key reported a spent quota for this model, so it is skipped until the quota resets.
+        response = None
+        if not self.quota_spent(model):
+            response = await self.generate_with_keys(client, model, payload)
+            if response.status_code in PROVIDER_UNAVAILABLE_STATUS:
+                MODEL_BUSY_UNTIL[model] = monotonic() + MODEL_BUSY_SECONDS
+        configured =os.getenv("GEMINI_QUOTA_FALLBACK_MODEL", "")
+        quota_models = [name.strip() for name in configured.split(",") if name.strip()] or QUOTA_FALLBACK_MODELS
+        # Free-tier request limits are counted per model, so another model can still answer.
+        for quota_model in quota_models:
+            if response is not None and response.status_code != 429:
+                break
+            if quota_model == model or (self.quota_spent(quota_model) and quota_model != quota_models[-1]):
+                continue
+            logger.warning("Gemini quota reached; trying the quota fallback model %s", quota_model)
+            self._key_index = 0
+            config = {key: value for key, value in payload.get("generationConfig", {}).items() if key != "thinkingConfig"}
+            if thinking := THINKING_LEVEL_BY_MODEL.get(quota_model):
+                config["thinkingConfig"] = {"thinkingLevel": thinking}
+            fallback = await self.generate_with_keys(client, quota_model, {**payload, "generationConfig": config})
+            if fallback.status_code != 404:
+                response = fallback
+        if response is None:
+            # No other model could answer, so ask the requested model after all.
+            self._key_index = 0
+            response = await self.generate_with_keys(client, model, payload)
+        return response
+
+    def quota_spent(self, model: str) -> bool:
+        now = monotonic()
+        return bool(self._keys) and all(QUOTA_SPENT_UNTIL.get((key, model), 0) > now for key in self._keys)
+
+    async def generate_with_keys(self, client: httpx.AsyncClient, model: str, payload: dict) -> httpx.Response:
+        while True:
+            # Skip keys that just reported a spent quota for this model, to save time and requests.
+            while self._key_index + 1 < len(self._keys) and QUOTA_SPENT_UNTIL.get((self.api_key, model), 0) > monotonic():
+                self._key_index += 1
+            response = await client.post(
+                f"models/{model}:generateContent", headers={"x-goog-api-key": self.api_key}, json=payload,
+                timeout=self._timeout,
+            )
+            if response.status_code == 429:
+                QUOTA_SPENT_UNTIL[(self.api_key, model)] = monotonic() + quota_pause_seconds(response)
+            if self._key_index + 1 == len(self._keys):
+                return response
+            key_rejected = response.status_code in {401, 403, 429} or (
+                response.status_code == 400 and describe_http_error(response).code in {
+                    "analysis_key_invalid", "analysis_key_leaked", "analysis_key_restricted",
+                }
+            )
+            if not key_rejected:
+                return response
+            self._key_index += 1
+            logger.warning("Gemini credential failed (status=%s); trying configured backup", response.status_code)
 
     async def analyze(
         self, image: bytes, mime_type: str, image_type: RequestedPhotoType
@@ -148,7 +257,7 @@ class GeminiAnalyzer:
             },
         }
 
-        model = self.model
+        model = available_model(self.model, self.fallback_model)
         generation_config = payload["generationConfig"]
         connection = nullcontext(self.client) if self.client is not None else create_gemini_client(self.transport)
         try:
@@ -160,11 +269,7 @@ class GeminiAnalyzer:
                         generation_config.pop("thinkingConfig", None)
                     response = None
                     try:
-                        response = await client.post(
-                            f"models/{model}:generateContent",
-                            headers={"x-goog-api-key": self.api_key},
-                            json=payload,
-                        )
+                        response = await self.generate_content(client, model, payload)
                         response.raise_for_status()
                         break
                     except httpx.HTTPStatusError:
@@ -197,18 +302,20 @@ class GeminiAnalyzer:
             raise GeminiError(502, "analysis_failed", "사진 분석에 실패했어요. 다시 시도해 주세요.") from None
 
         try:
-            candidate = response.json()["candidates"][0]
-            if candidate["finishReason"] != "STOP":
-                raise ValueError("Incomplete Gemini response")
-            text = "".join(
-                part.get("text", "") for part in candidate["content"]["parts"]
-                if not part.get("thought", False)
-            )
-            return PhotoReadings.model_validate_json(text)
+            return PhotoReadings.model_validate_json(gemini_candidate_text(response.json()["candidates"][0]))
         except (AttributeError, IndexError, KeyError, TypeError, ValueError):
             raise GeminiError(
                 502, "invalid_analysis_response", "사진 분석 결과를 읽을 수 없어요. 다시 시도해 주세요."
             ) from None
+
+
+def gemini_candidate_text(candidate: dict) -> str:
+    if candidate["finishReason"] != "STOP":
+        raise ValueError("Incomplete Gemini response")
+    return "".join(
+        part.get("text", "") for part in candidate["content"]["parts"]
+        if not part.get("thought", False)
+    )
 
 
 def retry_delay(response: httpx.Response | None, attempt: int) -> float:

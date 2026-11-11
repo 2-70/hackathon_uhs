@@ -9,23 +9,44 @@ from urllib.parse import parse_qsl
 
 from pydantic import BaseModel, HttpUrl, StringConstraints, TypeAdapter, ValidationError
 
-from .analysis import describe_care, format_fields, request_label_photo
+from .analysis import (
+    describe_care,
+    format_fields,
+    general_care_tips,
+    is_padded_garment,
+    material_guidance,
+    new_label_photo_request,
+    request_label_photo,
+)
 from .schemas import (
     AnalysisResponse,
     AnalyzedField,
     GarmentReadings,
     LabelReadings,
+    MaterialCareTips,
     ProductCandidate,
     ProductCareResponse,
+    ProductGuidanceSource,
     ProductInfo,
     ProductLookup,
     ProductMatchRequest,
+    ProductSource,
 )
 
 CATALOG_PATH = Path(__file__).resolve().parents[2] / "seed" / "verified" / "products.json"
 MatchMethod = Literal["reference_photo", "product_code", "official_url", "web_image"]
-BRAND_ALIASES = {"나이키": "nike", "쿠어": "coor"}
-TRACKING_PARAMETERS = {"gclid", "fbclid", "msclkid"}
+BRAND_ALIASES = {
+    "나이키": "nike", "쿠어": "coor", "아디다스": "adidas", "유니클로": "uniqlo",
+    "뉴발란스": "new balance", "푸마": "puma", "자라": "zara", "노스페이스": "the north face",
+    "무인양품": "muji", "파타고니아": "patagonia", "리바이스": "levi's", "갭": "gap",
+    "조던": "nike", "에어 조던": "nike", "jordan": "nike", "air jordan": "nike",
+    "아디다스 오리지널스": "adidas", "adidas originals": "adidas", "uniqlo u": "uniqlo",
+    "오프화이트": "off-white", "스투시": "stussy", "칼하트": "carhartt", "폴로": "polo", "라코스테": "lacoste",
+    "타미힐피거": "tommy hilfiger", "챔피온": "champion", "언더아머": "under armour", "아크테릭스": "arc'teryx",
+    "컬럼비아": "columbia", "휠라": "fila", "리복": "reebok", "컨버스": "converse", "반스": "vans",
+    "에이치앤엠": "h&m", "무신사 스탠다드": "musinsa standard", "스파오": "spao", "탑텐": "topten",
+}
+TRACKING_PARAMETERS = {"gclid", "fbclid", "msclkid", "srsltid"}
 
 
 class CatalogProduct(BaseModel):
@@ -34,7 +55,9 @@ class CatalogProduct(BaseModel):
     image_sha256: list[Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{64}$")]]
     reference_image_url: HttpUrl | None = None
     reference_page_url: HttpUrl | None = None
+    care_source: ProductSource = "official_product"
     care: LabelReadings
+    material_tips: MaterialCareTips | None = None
 
 
 @lru_cache(maxsize=1)
@@ -65,6 +88,31 @@ def brand_key(value: str | None) -> str:
     return BRAND_ALIASES.get(key, key)
 
 
+def same_brand(first: str | None, second: str | None) -> bool:
+    """Match a brand written with its translation, such as "나이키(NIKE)" and "Nike"."""
+    names = []
+    for value in (first, second):
+        key = search_key(value)
+        parts = [part.strip() for part in re.split(r"[()\[\]/,|·]", key)]
+        # Compare without spacing and punctuation, so "OFF WHITE" equals "Off-White".
+        names.append({re.sub(r"[^0-9a-z가-힣]", "", brand_key(part)) for part in (key, *parts) if part} - {""})
+    if names[0] & names[1]:
+        return True
+    # A sub-line or a longer legal name still names the brand ("Nike Sportswear", "Off-White c/o Virgil Abloh").
+    return any(
+        len(short) >= 4 and short in long
+        for one in names[0] for other in names[1]
+        for short, long in ((one, other), (other, one))
+    )
+
+
+def product_code_key(value: str | None) -> str:
+    key = search_key(value)
+    if re.fullmatch(r"[0-9]{6}[-_ ]?[0-9]{2}", key):
+        return re.sub(r"[-_ ]", "", key)
+    return key
+
+
 def garment_key(value: str | None) -> str:
     key = "".join(search_key(value).split())
     if any(term in key for term in ("후드", "후디", "hoodie")):
@@ -89,28 +137,36 @@ def products_with_code(brand: str, code: str, entries: Sequence[CatalogProduct])
         return []
     return [
         entry for entry in entries
-        if brand_key(entry.product.brand) == brand and search_key(entry.product.product_code) == code
+        if brand_key(entry.product.brand) == brand and product_code_key(entry.product.product_code) == code
     ]
 
 
 def match_photo_product_code(garment: GarmentReadings, entries: Sequence[CatalogProduct]) -> CatalogProduct | None:
-    code = garment.product_code
-    if not garment.brand or not code:
+    code = visible_product_code(garment)
+    if not garment.brand or code is None:
         return None
+    matches = products_with_code(brand_key(garment.brand.value), code, entries)
+    return matches[0] if len(matches) == 1 else None
+
+
+def visible_product_code(garment: GarmentReadings) -> str | None:
+    code = garment.product_code
+    if code is None:
+        return None
+    key = search_key(code.value)
     if not re.search(
-        rf"(?<![a-z0-9-]){re.escape(search_key(code.value))}(?![a-z0-9-])",
+        rf"(?<![a-z0-9-]){re.escape(key)}(?![a-z0-9-])",
         search_key(code.evidence),
     ):
         return None
-    matches = products_with_code(brand_key(garment.brand.value), search_key(code.value), entries)
-    return matches[0] if len(matches) == 1 else None
+    return product_code_key(key)
 
 
 def match_catalog(
     clues: ProductMatchRequest, entries: Sequence[CatalogProduct],
 ) -> tuple[ProductLookup, CatalogProduct | None]:
     brand = brand_key(clues.brand)
-    code = search_key(clues.product_code)
+    code = product_code_key(clues.product_code)
     url = official_url_key(clues.source_url)
     by_code = products_with_code(brand, code, entries)
     by_url = [entry for entry in entries if url is not None and official_url_key(entry.product.source_url) == url]
@@ -118,7 +174,7 @@ def match_catalog(
         exact = [
             entry for entry in by_url
             if (not brand or brand_key(entry.product.brand) == brand)
-            and (not code or search_key(entry.product.product_code) == code)
+            and (not code or product_code_key(entry.product.product_code) == code)
         ]
         method = "official_url"
     else:
@@ -156,20 +212,37 @@ def match_web_image(full_image_urls: list[HttpUrl], entries: Sequence[CatalogPro
     return matches[0] if len(matches) == 1 else None
 
 
-def describe_product_care(entry: CatalogProduct) -> ProductCareResponse:
-    guidance = describe_care(entry.care, official_product=True)
-    photo_request = request_label_photo(entry.care)
+def describe_product_care(entry: CatalogProduct, *, observed_type: str = "") -> ProductCareResponse:
+    fiber_content = entry.care.fiber_content.value if entry.care.fiber_content else ""
+    padded = is_padded_garment(f"{entry.garment_type} {entry.product.name} {observed_type}", fiber_content)
+    published = describe_care(entry.care, product_source=entry.care_source)
+    by_material = material_guidance(entry.care, entry.material_tips, padded=padded)
+    guidance = [*published, *by_material]
+    photo_request = new_label_photo_request(padded=True) if padded and entry.care.wash_method is None else request_label_photo(entry.care)
+    source = "판매처 상품 안내" if entry.care_source == "product_listing" else "상품 공식 안내"
+    guidance_source: ProductGuidanceSource | None = None
+    if published and by_material:
+        guidance_source = entry.care_source
+        message = f"{source}와 표시된 소재를 바탕으로 정리한 관리 방법이에요."
+    elif by_material:
+        guidance_source = "material_estimate"
+        message = f"{source}에 표시된 소재를 바탕으로 정리한 관리 방법이에요."
+    else:
+        guidance_source = entry.care_source if published else None
+        message = (
+            f"{source}에서 확인한 관리 방법이에요."
+            if guidance else "같은 상품을 찾았어요. 상품 페이지에서 확인할 수 있는 세탁 안내가 없어요."
+        )
+    if photo_request:
+        message = f"{message} {photo_request.instructions}"
     return ProductCareResponse(
         product=entry.product,
-        product_care=format_fields(entry.care, source="official_product"),
+        product_care=format_fields(entry.care, source=entry.care_source),
         care_guidance=guidance,
-        care_guidance_source="official_product" if guidance else None,
+        care_guidance_source=guidance_source,
         photo_request=photo_request,
         next_actions=["capture_label", "manual_entry"] if photo_request else [],
-        message=(
-            f"상품을 확인했어요. {photo_request.instructions}"
-            if photo_request else "상품 공식 안내에서 세탁·건조 방법을 찾았어요."
-        ),
+        message=message,
     )
 
 
@@ -178,6 +251,7 @@ def attach_product(
 ) -> AnalysisResponse:
     product = entry.product
     garment = dict(result.garment) if result else format_fields(GarmentReadings())
+    observed_type = garment.get("garment_type")
     for key, value in (
         ("garment_type", entry.garment_type),
         ("brand", product.brand),
@@ -185,21 +259,25 @@ def attach_product(
         ("product_name", product.name),
         ("product_code", product.product_code),
     ):
-        if value is not None:
+        if value:
             garment[key] = AnalyzedField(
-                value=value, source="official_product", status="verified", evidence=product.name,
+                value=value, source=entry.care_source, status="verified", evidence=product.name,
             )
 
-    care = describe_product_care(entry)
-    estimated_guidance = result.care_guidance if result and result.care_guidance_source == "estimated" else []
+    seen_type = str(observed_type.value or "") if observed_type else ""
+    care = describe_product_care(entry, observed_type=seen_type)
+    if not care.care_guidance:
+        # No published care and no known fiber. Show common habits for this kind of garment instead of nothing.
+        tips = general_care_tips(f"{seen_type} {entry.garment_type} {product.name}", product.color)
+        care = care.model_copy(update={"care_guidance": tips, "care_guidance_source": "estimated" if tips else None})
     return AnalysisResponse(
         image_type="garment",
         status="analyzed",
         garment=garment,
         product_lookup=ProductLookup(status="matched", match_method=method, product=product),
         product_care=care.product_care,
-        care_guidance=care.care_guidance or estimated_guidance,
-        care_guidance_source=care.care_guidance_source or ("estimated" if estimated_guidance else None),
+        care_guidance=care.care_guidance,
+        care_guidance_source=care.care_guidance_source,
         photo_request=care.photo_request,
         next_actions=care.next_actions,
         message=care.message,
