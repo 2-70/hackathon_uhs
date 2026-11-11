@@ -1,0 +1,51 @@
+{
+  "products": [
+    {
+      "product_key": "example-brand/example-shirt",
+      "brand": "Example Brand",
+      "product_name": "검증 로더 예시 셔츠",
+      "official_url": "https://example.com/products/example-shirt",
+      "source_type": "official_product_information",
+      "verification_status": "unconfirmed",
+      "care_instructions": [
+        {
+          "field_name": "wash_temperature_celsius",
+          "value_text": "30",
+          "source_type": "official_product_information",
+          "source_url": "https://example.com/products/example-shirt/care",
+          "verification_status": "unconfirmed"
+        }
+      ]
+    }
+  ],
+  "machine_models": [
+    {
+      "machine_key": "example-maker/example-washer-1",
+      "machine_type": "washer",
+      "manufacturer": "Example Maker",
+      "model_name": "예시 세탁기 1",
+      "source_url": "https://example.com/support/example-washer-1",
+      "verification_status": "unconfirmed",
+      "verified_scope": "로더 동작 확인용 예시이며 공식 검증 데이터가 아닙니다.",
+      "courses": [
+        {
+          "course_key": "normal",
+          "name": "표준",
+          "description": "로더 동작 확인용 예시 코스",
+          "settings": [
+            {
+              "temperature_celsius": 30,
+              "spin_level": "low",
+              "verification_status": "unconfirmed"
+            },
+            {
+              "temperature_celsius": 40,
+              "spin_level": "medium",
+              "verification_status": "unconfirmed"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
