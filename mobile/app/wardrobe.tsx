@@ -5,6 +5,7 @@ import { Image, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import type { Garment } from '../src/model';
+import { LaundryLoading } from '../src/LaundryLoading';
 import { basketLimit, useLaundry } from '../src/store';
 import { Button, Notice, Screen, ScreenHeader, SearchField, palette, styles } from '../src/ui';
 
@@ -91,7 +92,7 @@ export default function WardrobeScreen() {
           placeholder="이름, 종류, 색상, 소재"
         />
         {loadError && <Notice tone="error">{loadError}</Notice>}
-        {!ready && !loadError && <Notice>옷장을 불러오는 중이에요.</Notice>}
+        {!ready && !loadError && <LaundryLoading compact label="옷장을 불러오는 중이에요." />}
         {ready && !loadError && (
           <View style={local.inventory}>
             <View style={local.listHeader}>

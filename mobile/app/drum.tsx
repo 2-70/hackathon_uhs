@@ -1,8 +1,9 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, Image, Pressable, StyleSheet, Text, View, type ScrollViewInstance } from 'react-native';
+import { Image, Pressable, StyleSheet, Text, View, type ScrollViewInstance } from 'react-native';
 import { calculatePlan, validateSettings } from '../src/mock';
+import { LaundryLoading } from '../src/LaundryLoading';
 import type { Garment, Machine, Plan } from '../src/model';
 import { basketLimit, useLaundry } from '../src/store';
 import { Button, Chip, Field, Notice, Screen, palette, styles } from '../src/ui';
@@ -65,10 +66,10 @@ export default function Drum() {
     if (loadError) return null;
     if (!ready || busy) {
       return (
-        <View style={drum.loading} accessibilityLiveRegion="polite">
-          <ActivityIndicator color={palette.accent} size="small" />
-          <Text style={styles.body}>{ready ? '세탁 계획 계산 중' : '옷장 불러오는 중'}</Text>
-        </View>
+        <LaundryLoading
+          compact
+          label={ready ? '세탁 계획을 계산하고 있어요.' : '옷장을 불러오는 중이에요.'}
+        />
       );
     }
     if (error) return <Button onPress={() => setAttempt((previous) => previous + 1)}>다시 계산</Button>;
@@ -337,7 +338,6 @@ const drum = StyleSheet.create({
   action: { width: '100%', maxWidth: 270, alignSelf: 'center' },
   link: { minHeight: 44, paddingHorizontal: 5, paddingVertical: 8, flexDirection: 'row', alignItems: 'center', gap: 3 },
   linkText: { color: palette.accent, fontSize: 13, lineHeight: 19, fontWeight: '700' },
-  loading: { minHeight: 48, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 9, paddingHorizontal: 9, borderRadius: 13, backgroundColor: palette.accentWash },
   collection: { paddingHorizontal: 13, paddingTop: 3, paddingBottom: 4 },
   sectionHeader: { flexDirection: 'row', alignItems: 'center', gap: 8, minHeight: 44, paddingVertical: 3 },
   item: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 7, borderTopWidth: 1, borderTopColor: palette.line },

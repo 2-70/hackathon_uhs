@@ -5,6 +5,7 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { searchMachines } from '../src/mock';
+import { LaundryLoading } from '../src/LaundryLoading';
 import type { Machine } from '../src/model';
 import { useLaundry } from '../src/store';
 import { Button, Notice, Screen, SearchField, palette, styles } from '../src/ui';
@@ -87,7 +88,7 @@ export default function MachinesScreen() {
           />
 
           {result.query !== query || result.status === 'loading' ? (
-            <Notice>모델을 찾는 중이에요.</Notice>
+            <LaundryLoading compact label="모델을 찾는 중이에요." />
           ) : result.status === 'error' ? (
             <View style={local.feedback}>
               <Notice tone="error">모델 목록을 불러오지 못했어요.</Notice>

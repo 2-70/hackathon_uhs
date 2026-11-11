@@ -5,6 +5,7 @@ import { useRef, useState, type ReactNode } from 'react';
 import { Image, Linking, Platform, Pressable, StyleSheet, Text, useWindowDimensions, View, type TextInputInstance } from 'react-native';
 
 import { analyzePhoto, blankGarment } from '../src/mock';
+import { LaundryLoading } from '../src/LaundryLoading';
 import type { Garment, GarmentDraft } from '../src/model';
 import { basketLimit, useLaundry } from '../src/store';
 import { Button, Field, Notice, Screen, ScreenHeader, palette, styles } from '../src/ui';
@@ -68,9 +69,9 @@ export default function GarmentScreen() {
     return (
       <EditorPage title={id ? '옷 수정' : '옷 추가'}>
         <Screen reserveTabBar={false}>
-          <Notice tone={loadError ? 'error' : 'info'}>
-            {loadError ?? '옷장을 불러오는 중이에요.'}
-          </Notice>
+          {loadError
+            ? <Notice tone="error">{loadError}</Notice>
+            : <LaundryLoading compact label="옷장을 불러오는 중이에요." />}
         </Screen>
       </EditorPage>
     );
@@ -575,11 +576,15 @@ function PhotoEntry({
             )}
           </View>
           {error ? <Notice tone="error">{error}</Notice> : null}
-          {uri && (
+          {uri && (analyzing ? (
+            <LaundryLoading
+              label={kind === 'label' ? '세탁 라벨의 표시를 읽고 있어요.' : '옷의 종류와 관리 정보를 살펴보고 있어요.'}
+            />
+          ) : (
             <Button icon="scan-outline" disabled={busy} onPress={onAnalyze}>
-              {analyzing ? '분석 중…' : error ? '분석 다시 시도' : '샘플 분석'}
+              {error ? '분석 다시 시도' : '샘플 분석'}
             </Button>
-          )}
+          ))}
         </>
       )}
       <PhotoControls selected={Boolean(uri)} busy={busy} onCamera={onCamera} onLibrary={onLibrary} />

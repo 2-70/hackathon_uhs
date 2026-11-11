@@ -160,34 +160,29 @@ type LaundryRouteHeaderProps = {
 
 export function LaundryRouteHeader({ active, onBack, onNavigate }: LaundryRouteHeaderProps) {
   return (
-    <View style={[styles.screenHeader, styles.laundryHeader]}>
-      <SpringPressable
-        accessibilityRole="button"
-        accessibilityLabel="뒤로"
-        onPress={onBack}
-        style={styles.headerBack}
-      >
-        <Ionicons name="chevron-back" size={22} color={palette.ink} />
-      </SpringPressable>
-      <View style={styles.laundrySwitch}>
-        {([
-          ['drum', '드럼', '/drum'],
-          ['machines', '세탁기', '/machines'],
-        ] as const).map(([key, label, route]) => {
-          const selected = active === key;
-          return (
-            <SpringPressable
-              key={key}
-              accessibilityRole="tab"
-              accessibilityLabel={label}
-              accessibilityState={{ selected }}
-              onPress={() => { if (!selected) onNavigate(route); }}
-              style={[styles.laundrySegment, selected && styles.laundrySegmentSelected]}
-            >
-              <Text style={[styles.laundrySegmentLabel, selected && styles.laundrySegmentLabelSelected]}>{label}</Text>
-            </SpringPressable>
-          );
-        })}
+    <View>
+      <ScreenHeader title={active === 'drum' ? '가상 드럼' : '우리 집 세탁기'} onBack={onBack} />
+      <View style={styles.laundryTabsRow}>
+        <View style={styles.laundrySwitch} accessibilityRole="tablist" accessibilityLabel="세탁 화면">
+          {([
+            ['drum', '드럼', '/drum'],
+            ['machines', '세탁기', '/machines'],
+          ] as const).map(([key, label, route]) => {
+            const selected = active === key;
+            return (
+              <SpringPressable
+                key={key}
+                accessibilityRole="tab"
+                accessibilityLabel={label}
+                accessibilityState={{ selected }}
+                onPress={() => { if (!selected) onNavigate(route); }}
+                style={[styles.laundrySegment, selected && styles.laundrySegmentSelected]}
+              >
+                <Text style={[styles.laundrySegmentLabel, selected && styles.laundrySegmentLabelSelected]}>{label}</Text>
+              </SpringPressable>
+            );
+          })}
+        </View>
       </View>
     </View>
   );
@@ -308,10 +303,10 @@ export const styles = StyleSheet.create({
   content: { paddingHorizontal: 20, paddingTop: 16, paddingBottom: 26, gap: 17, width: '100%', maxWidth: 640, alignSelf: 'center' },
   heading: { gap: 5, paddingBottom: 2 },
   screenHeader: { minHeight: 56, width: '100%', maxWidth: 640, alignSelf: 'center', flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, gap: 0 },
-  laundryHeader: { gap: 8 },
   headerBack: { width: 44, height: 44, alignItems: 'flex-start', justifyContent: 'center', paddingLeft: 1 },
-  laundrySwitch: { flex: 1, minWidth: 0, maxWidth: 240, flexDirection: 'row', padding: 3, gap: 3, borderRadius: 14, backgroundColor: palette.subtle },
-  laundrySegment: { flex: 1, minWidth: 0, minHeight: 36, paddingHorizontal: 8, borderRadius: 11, alignItems: 'center', justifyContent: 'center' },
+  laundryTabsRow: { minHeight: 48, width: '100%', maxWidth: 640, alignSelf: 'center', justifyContent: 'center', paddingHorizontal: 20 },
+  laundrySwitch: { width: 240, maxWidth: '100%', flexDirection: 'row', padding: 2, gap: 2, borderRadius: 14, backgroundColor: palette.subtle },
+  laundrySegment: { flex: 1, minWidth: 0, minHeight: 44, paddingHorizontal: 8, borderRadius: 11, alignItems: 'center', justifyContent: 'center' },
   laundrySegmentSelected: { backgroundColor: palette.surface, borderWidth: 1, borderColor: palette.line },
   laundrySegmentLabel: { color: palette.muted, fontSize: 12, lineHeight: 16, fontWeight: '700' },
   laundrySegmentLabelSelected: { color: palette.accent, fontWeight: '800' },
