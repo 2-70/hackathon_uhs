@@ -1,0 +1,33 @@
+# Python이 생성하는 캐시 파일은 소스 관리 대상이 아니므로 제외합니다.
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# 로컬 가상환경은 개발자별로 달라 저장하지 않습니다.
+.venv/
+venv/
+.uv-cache/
+.uv-python/
+.tmp/
+
+# 실제 비밀값이 들어갈 수 있는 환경 파일은 저장하지 않습니다.
+.env
+.env.local
+.env.*.local
+
+# 로컬 SQLite 데이터베이스는 테스트와 개발용 산출물이므로 제외합니다.
+*.db
+*.sqlite
+*.sqlite3
+
+# 운영 로그와 테스트 결과 파일은 저장하지 않습니다.
+*.log
+coverage.xml
+.coverage
+htmlcov/
+
+.neon
+node_modules/
