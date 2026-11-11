@@ -5,6 +5,7 @@ import { BlurView } from 'expo-blur';
 import { Slot, usePathname, useRouter, type Href } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { StyleSheet, Text, View } from 'react-native';
+import Animated, { FadeInRight } from 'react-native-reanimated';
 import { SafeAreaProvider, SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LaundryProvider } from '../src/store';
 import { LaundryRouteHeader, palette, ScreenHeader, SpringPressable, styles, type IconName } from '../src/ui';
@@ -51,7 +52,10 @@ function AppShell() {
       ) : null}
 
       <View style={layout.page}>
-        <View style={layout.route}><Slot /></View>
+        {/* 경로가 바뀔 때 화면을 짧게 밀어 넣고 투명도를 올려 자연스럽게 전환합니다. */}
+        <Animated.View key={pathname} entering={FadeInRight.duration(240)} style={layout.route}>
+          <Slot />
+        </Animated.View>
       </View>
 
       {!isEditor && (

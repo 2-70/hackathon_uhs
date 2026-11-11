@@ -7,8 +7,12 @@
     "scheme": "washwise",
     "userInterfaceStyle": "light",
     "platforms": [
-      "android"
+      "android",
+      "web"
     ],
+    "web": {
+      "bundler": "metro"
+    },
     "android": {
       "package": "com.hackathonuhs.washwise"
     },
