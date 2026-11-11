@@ -12,7 +12,6 @@ from pydantic import BaseModel, HttpUrl, StringConstraints, TypeAdapter, Validat
 from .analysis import (
     describe_care,
     format_fields,
-    general_care_tips,
     is_padded_garment,
     material_guidance,
     new_label_photo_request,
@@ -216,23 +215,33 @@ def describe_product_care(entry: CatalogProduct, *, observed_type: str = "") -> 
     fiber_content = entry.care.fiber_content.value if entry.care.fiber_content else ""
     padded = is_padded_garment(f"{entry.garment_type} {entry.product.name} {observed_type}", fiber_content)
     published = describe_care(entry.care, product_source=entry.care_source)
-    by_material = material_guidance(entry.care, entry.material_tips, padded=padded)
+    by_material = material_guidance(
+        entry.care,
+        entry.material_tips,
+        padded=padded,
+        garment_description=f"{entry.garment_type} {entry.product.name} {observed_type}",
+    )
     guidance = [*published, *by_material]
     photo_request = new_label_photo_request(padded=True) if padded and entry.care.wash_method is None else request_label_photo(entry.care)
+    if by_material and photo_request is None:
+        photo_request = new_label_photo_request(padded=padded)
     source = "판매처 상품 안내" if entry.care_source == "product_listing" else "상품 공식 안내"
     guidance_source: ProductGuidanceSource | None = None
     if published and by_material:
         guidance_source = entry.care_source
-        message = f"{source}와 표시된 소재를 바탕으로 정리한 관리 방법이에요."
+        message = f"{source}에서 확인한 항목과 소재 기준의 잠정 권장 사항을 구분해 표시했어요."
     elif by_material:
         guidance_source = "material_estimate"
-        message = f"{source}에 표시된 소재를 바탕으로 정리한 관리 방법이에요."
+        message = "상품 페이지에서 확인한 소재 정보에 따른 잠정 관리 권장 사항이에요. 정확한 세탁법은 실제 옷의 라벨을 확인해 주세요."
+    elif published:
+        guidance_source = entry.care_source
+        message = f"{source}에서 확인한 관리 방법이에요."
     else:
-        guidance_source = entry.care_source if published else None
-        message = (
-            f"{source}에서 확인한 관리 방법이에요."
-            if guidance else "같은 상품을 찾았어요. 상품 페이지에서 확인할 수 있는 세탁 안내가 없어요."
-        )
+        guidance_source = None
+        if entry.care.fiber_content:
+            message = "상품 페이지에서 소재 정보는 확인했지만, 그 정보만으로 세탁 정보를 확실하게 판단할 수 없어요. 실제 옷의 세탁 라벨을 찍어 주세요."
+        else:
+            message = "같은 상품을 찾았지만 상품 페이지에서 세탁 안내와 소재 정보를 확인하지 못해 세탁 정보를 확실하게 알 수 없어요. 실제 옷의 세탁 라벨을 찍어 주세요."
     if photo_request:
         message = f"{message} {photo_request.instructions}"
     return ProductCareResponse(
@@ -266,10 +275,6 @@ def attach_product(
 
     seen_type = str(observed_type.value or "") if observed_type else ""
     care = describe_product_care(entry, observed_type=seen_type)
-    if not care.care_guidance:
-        # No published care and no known fiber. Show common habits for this kind of garment instead of nothing.
-        tips = general_care_tips(f"{seen_type} {entry.garment_type} {product.name}", product.color)
-        care = care.model_copy(update={"care_guidance": tips, "care_guidance_source": "estimated" if tips else None})
     return AnalysisResponse(
         image_type="garment",
         status="analyzed",

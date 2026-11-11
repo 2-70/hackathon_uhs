@@ -492,13 +492,15 @@ def test_registered_reference_photo_returns_official_care_without_gemini(client,
     assert result["product_lookup"]["product"]["source_url"].startswith("https://www.coor.kr/")
     assert result["product_care"]["wash_method"]["source"] == "official_product"
     assert result["product_care"]["tumble_dry_allowed"]["status"] == "needs_confirmation"
-    assert result["care_guidance"] == [
+    assert result["care_guidance"][:3] == [
         "손세탁하세요.", "드라이클리닝도 가능해요.", "뒤집어서 세탁하는 방법은 권장하지 않아요.",
-        # The published fiber content (cotton 100%) adds advice that the official page leaves out.
-        "소재 기준 권장: 면은 뜨거운 물에서 줄어들 수 있어요. 찬물이나 미지근한 물로 세탁하세요.",
-        "소재 기준 권장: 모양을 잡아 자연 건조하세요.",
     ]
-    assert "소재를 바탕으로" in result["message"]
+    material_guidance = result["care_guidance"][3:]
+    assert all(line.startswith("소재 기준 권장: ") and " · " in line for line in material_guidance)
+    assert any("물 온도 · " in line and "줄어들 수" in line for line in material_guidance)
+    assert any("세제 · " in line and "중성세제" in line for line in material_guidance)
+    assert any("건조 · " in line and "자연 건조" in line for line in material_guidance)
+    assert "소재 기준의 잠정 권장 사항" in result["message"]
     assert result["care_guidance_source"] == "official_product"
     assert "건조 기호" in result["photo_request"]["instructions"]
 
@@ -868,15 +870,15 @@ def test_lens_compares_the_search_photo_of_any_shop_page(client, photo, monkeypa
         # The matched search photo identifies the product, but care from an unread page is discarded.
         assert result["product_lookup"]["status"] == "matched"
         assert result["product_lookup"]["product"]["source_url"] == page
-        assert result["care_guidance_source"] == "estimated"
-        # The label is requested once, by the photo request. The tips do not repeat it.
-        assert result["care_guidance"] and not any("라벨" in line for line in result["care_guidance"])
+        assert result["care_guidance_source"] is None
+        assert result["care_guidance"] == []
+        assert "세탁 정보를 확실하게 알 수 없어요" in result["message"]
         assert result["product_care"]["wash_method"]["value"] is None
         assert result["photo_request"]["image_type"] == "care_label"
 
 
-@pytest.mark.parametrize("published_care", [True, False])
-def test_photo_analysis_precedes_search_and_product_verification(client, photo, monkeypatch, published_care):
+@pytest.mark.parametrize("care_profile", ["partial", "material_only", "none"])
+def test_photo_analysis_precedes_search_and_product_verification(client, photo, monkeypatch, care_profile):
     page = "https://shop.example.com/goods/774"
     requests = []
 
@@ -896,14 +898,20 @@ def test_photo_analysis_precedes_search_and_product_verification(client, photo, 
         "reference": 0, "match": "visual", "brand": "EXAMPLE", "name": "후드 집업 재킷", "color": "블루",
         "visual_evidence": ["같은 사진", "가슴의 지퍼 포켓"],
         "care": {
-            "fiber_content": {"value": "면 100%", "evidence": "면 100%"},
+            "fiber_content": {
+                "value": "면 84%, 폴리에스터 14%, 폴리우레탄 2%",
+                "evidence": "면 84%, 폴리에스터 14%, 폴리우레탄 2%",
+            },
             "wash_method": {"value": "machine_wash", "evidence": "세탁기 사용 가능"},
             "bleach": {"value": "표백 금지", "evidence": "Do not iron print"},
         },
         "material_tips": {"washing": "mesh_bag", "drying": "dry_in_shade"},
     }
-    if not published_care:
+    if care_profile != "partial":
         product["care"].pop("wash_method")
+    if care_profile == "none":
+        product["care"].pop("fiber_content")
+        product.pop("material_tips")
 
     def analyze(request):
         payload = json.loads(request.content)
@@ -939,13 +947,36 @@ def test_photo_analysis_precedes_search_and_product_verification(client, photo, 
     assert result["garment"]["garment_type"]["value"] == "후드 집업"
     assert result["product_lookup"]["status"] == "matched"
     assert result["product_lookup"]["product"]["source_url"] == page
-    assert result["care_guidance_source"] == ("product_listing" if published_care else "material_estimate")
-    assert result["care_guidance"] == [
-        *(["세탁기로 세탁할 수 있어요."] if published_care else []),
-        "소재 기준 권장: " + ("" if published_care else "라벨에서 세탁기 사용을 허용하면 ")
-        + "세탁망에 넣어 다른 옷과의 마찰을 줄여 주세요.",
-        "소재 기준 권장: 직사광선을 피해 그늘에서 말리세요.",
-    ]
+    if care_profile == "partial":
+        assert result["care_guidance_source"] == "product_listing"
+        assert result["care_guidance"][0] == "세탁기로 세탁할 수 있어요."
+        estimated = result["care_guidance"][1:]
+        assert all(line.startswith("소재 기준 권장: ") and " · " in line for line in estimated)
+        assert any("물 온도 · " in line and "찬물 또는 30°C 이하" in line for line in estimated)
+        assert any("세탁 방식 · " in line and "울·섬세 코스" in line for line in estimated)
+        assert any("마찰 · " in line and "세탁망" in line for line in estimated)
+        assert any("건조 · " in line and "평평하게 자연 건조" in line for line in estimated)
+        # The mismatched extracted bleach value is discarded, so the topic remains an estimate.
+        assert any("표백 · " in line and "피하는 편이 안전" in line for line in estimated)
+        assert "판매처 상품 안내에서 확인한 항목" in result["message"]
+        assert "잠정 권장 사항" in result["message"]
+    elif care_profile == "material_only":
+        assert result["care_guidance_source"] == "material_estimate"
+        estimated = result["care_guidance"]
+        assert estimated and all(line.startswith("소재 기준 권장: ") and " · " in line for line in estimated)
+        assert any("물 온도 · " in line and "찬물 또는 30°C 이하" in line for line in estimated)
+        assert any("세탁기 사용이 라벨에 허용되면" in line for line in estimated)
+        assert any("탈수 · " in line and "짧고 낮은 강도" in line for line in estimated)
+        assert any("표백 · " in line and "피하는 편이 안전" in line for line in estimated)
+        assert any("다림질 · " in line and "110°C는 보수적 참고값" in line for line in estimated)
+        assert any("건조 · " in line and "평평하게 자연 건조" in line for line in estimated)
+        assert "잠정 관리 권장 사항" in result["message"]
+    else:
+        assert result["care_guidance_source"] is None
+        assert result["care_guidance"] == []
+        assert "세탁 정보를 확실하게 알 수 없어요" in result["message"]
+    assert result["photo_request"]["image_type"] == "care_label"
+    assert "capture_label" in result["next_actions"]
     assert result["product_care"]["dry_in_shade"]["status"] == "needs_confirmation"
     assert result["product_care"]["bleach"]["status"] == "needs_confirmation"
 

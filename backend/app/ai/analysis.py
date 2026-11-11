@@ -41,34 +41,7 @@ MATERIAL_PREFIX = "소재 기준 권장: "
 LEATHER_FIBERS = {"가죽", "스웨이드", "leather", "suede"}
 WOOL_FIBERS = ("울", "모", "양모", "캐시미어", "메리노", "알파카", "앙고라", "wool", "cashmere", "merino")
 DOWN_FIBERS = {"다운", "덕다운", "구스", "오리털", "거위털", "솜털", "깃털", "down", "feather", "feathers"}
-# Use the most delicate listed fiber for products that already have a verified catalog entry.
-MATERIAL_RULES = (
-    (("실크", "견", "silk"),
-     "마찰을 줄이고 중성세제를 사용하세요.", "직사광선을 피해 그늘에서 말리세요."),
-    (WOOL_FIBERS,
-     "울 전용 중성세제를 쓰고 비비지 마세요.", "비틀어 짜지 말고 평평하게 펴서 그늘에 말리세요."),
-    (("레이온", "비스코스", "모달", "텐셀", "리오셀", "큐프라", "rayon", "viscose", "modal", "lyocell", "tencel"),
-     "젖은 상태에서 세게 비비거나 비틀어 짜지 마세요.", "모양을 잡아 자연 건조하세요."),
-    (("린넨", "리넨", "마", "linen"),
-     "강하게 비비면 구김이 생길 수 있어요. 옷감에 가해지는 마찰을 줄여 주세요.", "모양을 잡아 자연 건조하세요."),
-    (("아크릴", "acrylic"),
-     "보풀이 생기기 쉬워 다른 옷과의 마찰을 줄여 주세요.", "모양을 잡아 자연 건조하세요."),
-    (("면", "코튼", "cotton"),
-     "면은 뜨거운 물에서 줄어들 수 있어요. 찬물이나 미지근한 물로 세탁하세요.",
-     "모양을 잡아 자연 건조하세요."),
-    (("나일론", "폴리아미드", "nylon", "polyamide"),
-     "나일론은 열에 약해 뜨거운 물을 피하는 편이 좋아요.", "직사광선을 피해 자연 건조하세요."),
-    (("폴리에스터", "폴리에스테르", "polyester"),
-     "보풀을 줄이도록 다른 옷과의 마찰을 줄여 주세요.", "열이 닿지 않는 곳에서 자연 건조하세요."),
-)
 STRETCH_FIBERS = ("폴리우레탄", "스판덱스", "엘라스테인", "스판", "elastane", "spandex", "lycra")
-WASHING_TIPS = {
-    "mesh_bag": "세탁망에 넣어 다른 옷과의 마찰을 줄여 주세요.",
-    "mild_detergent": "중성세제를 사용해 옷감의 부담을 줄여 주세요.",
-    "wool_detergent": "울 전용 중성세제를 사용하세요.",
-    "light_agitation": "세게 비비거나 비틀어 짜지 마세요.",
-    "avoid_softener": "섬유유연제는 피하는 편이 좋아요.",
-}
 DRYING_TIPS = {
     "dry_flat": "늘어나지 않도록 모양을 잡아 평평하게 말리세요.",
     "dry_in_shade": "직사광선을 피해 그늘에서 말리세요.",
@@ -175,51 +148,265 @@ def is_padded_garment(description: str, fiber_content: str = "") -> bool:
     )
 
 
-def material_guidance(label: LabelReadings, tips: MaterialCareTips | None = None, *, padded: bool = False) -> list[str]:
+FIBER_ALIASES = {
+    "cotton": ("면", "코튼", "cotton"),
+    "wool": WOOL_FIBERS,
+    "silk": ("실크", "견", "silk"),
+    "rayon": ("레이온", "비스코스", "모달", "텐셀", "리오셀", "큐프라", "rayon", "viscose", "modal", "lyocell", "tencel"),
+    "linen": ("린넨", "리넨", "마", "linen"),
+    "acrylic": ("아크릴", "acrylic"),
+    "nylon": ("나일론", "폴리아미드", "nylon", "polyamide"),
+    "polyester": ("폴리에스터", "폴리에스테르", "polyester"),
+    "stretch": STRETCH_FIBERS,
+    "leather": tuple(LEATHER_FIBERS),
+    "down": tuple(DOWN_FIBERS),
+}
+MIXED_MATERIAL_HINTS = r"혼방|혼합|blend|blended|기타 섬유|other fibers?"
+UNKNOWN_FIBER_HINTS = r"기타|other|unknown|etc"
+
+
+def _fiber_matches(text: str) -> set[str]:
+    matched = set()
+    for fiber, aliases in FIBER_ALIASES.items():
+        for alias in aliases:
+            pattern = re.escape(alias)
+            if alias.isascii():
+                pattern = rf"(?<![a-z]){pattern}(?![a-z])"
+            elif len(alias) == 1:
+                pattern = rf"(?<![가-힣]){pattern}(?![가-힣])"
+            if re.search(pattern, text, re.IGNORECASE):
+                matched.add(fiber)
+                break
+    return matched
+
+
+def _fiber_alias_count(text: str) -> int:
+    return sum(
+        len(re.findall(rf"(?<![가-힣]){re.escape(alias)}(?![가-힣])", text, re.IGNORECASE))
+        if not alias.isascii()
+        else len(re.findall(rf"(?<![a-z]){re.escape(alias)}(?![a-z])", text, re.IGNORECASE))
+        for aliases in FIBER_ALIASES.values()
+        for alias in aliases
+    )
+
+
+def _fiber_percentages(text: str) -> dict[str, float] | None:
+    """Return a complete, near-100% composition, or None when the text is ambiguous."""
+    segments = [segment.strip() for segment in re.split(r",|;|/|\+|및|\band\b", text, flags=re.IGNORECASE) if segment.strip()]
+    if not segments:
+        return None
+    percentages = {}
+    for segment in segments:
+        matched = _fiber_matches(segment)
+        numbers = re.findall(r"\d+(?:[.,]\d+)?\s*%", segment)
+        if len(matched) != 1 or len(numbers) != 1:
+            return None
+        fiber = next(iter(matched))
+        if fiber in percentages:
+            return None
+        percentages[fiber] = float(numbers[0].replace("%", "").replace(",", ".").strip())
+    total = sum(percentages.values())
+    return percentages if 95 <= total <= 105 else None
+
+
+def _has_note(notes: str, pattern: str) -> bool:
+    return bool(re.search(pattern, notes, re.IGNORECASE))
+
+
+def _material_line(topic: str, text: str) -> str:
+    return f"{MATERIAL_PREFIX}{topic} · {text}"
+
+
+def material_guidance(
+    label: LabelReadings,
+    tips: MaterialCareTips | None = None,
+    *,
+    padded: bool = False,
+    garment_description: str = "",
+) -> list[str]:
     if label.fiber_content is None:
         return []
     method = label.wash_method.value if label.wash_method else None
-    notes = " ".join(reading.value for reading in (label.professional_cleaning, label.special_instructions) if reading)
+    cleaning_notes = " ".join(
+        reading.value for reading in (label.professional_cleaning, label.special_instructions) if reading
+    )
+    special_notes = label.special_instructions.value if label.special_instructions else ""
+    detergent_notes = " ".join(
+        reading.value for reading in (label.special_instructions, label.bleach) if reading
+    )
+    bleach_notes = detergent_notes
+    ironing_notes = " ".join(
+        reading.value for reading in (label.special_instructions, label.ironing) if reading
+    )
     no_water = r"물세탁(?:은|을)?\s*(?:금지|불가|피)|드라이\s*클리닝\s*(?:만|전용)|dry[ -]clean only|do not wash"
-    if method == "do_not_wash" or re.search(no_water, notes, re.IGNORECASE):
+    if method == "do_not_wash" or re.search(no_water, cleaning_notes, re.IGNORECASE):
         return []
-    fibers = set(re.findall(r"[a-z]+|[가-힣]+", normalize("NFKC", label.fiber_content.value).casefold()))
-    if fibers & LEATHER_FIBERS:
+    fiber_text = normalize("NFKC", label.fiber_content.value).casefold()
+    fibers = _fiber_matches(fiber_text)
+    if "leather" in fibers:
         return []
     if padded:
         # The shell and filling alone cannot establish home washing or drying permissions.
-        if method in {"machine_wash", "hand_wash"} and fibers & DOWN_FIBERS and not re.search(
-            r"세제|섬유유연제|detergent|softener", notes, re.IGNORECASE,
+        if method in {"machine_wash", "hand_wash"} and "down" in fibers and not re.search(
+            r"세제|섬유유연제|detergent|softener", detergent_notes, re.IGNORECASE,
         ):
             return [f"{MATERIAL_PREFIX}다운 충전재에는 섬유유연제를 피하는 편이 좋아요."]
         return []
-    _, washing, drying = next((rule for rule in MATERIAL_RULES if fibers & set(rule[0])), ((), None, None))
-    if fibers & set(STRETCH_FIBERS):
-        washing = washing or WASHING_TIPS["avoid_softener"]
-        drying = drying or DRYING_TIPS["reshape_and_air_dry"]
-    washing_tip = tips.washing if tips else None
-    hand_wash_only = method == "hand_wash" or re.search(r"손세탁\s*만|hand[ -]wash only", notes, re.IGNORECASE)
-    if (washing_tip == "mesh_bag" and hand_wash_only) or (
-        washing_tip == "wool_detergent" and fibers.isdisjoint(WOOL_FIBERS)
+    percentages = _fiber_percentages(fiber_text)
+    if not fibers:
+        return []
+    percent_count = len(re.findall(r"\d+(?:[.,]\d+)?\s*%", fiber_text))
+    # Don't infer a component hidden behind an unrecognized blend term.
+    if (
+        len(fibers) == 1
+        and (
+            (_has_note(fiber_text, MIXED_MATERIAL_HINTS) and percentages is None)
+            or (re.search(r"/|\+", fiber_text) and re.search(r"\d", fiber_text) and percent_count == 0)
+        )
+        or percent_count > _fiber_alias_count(fiber_text)
+        or _has_note(fiber_text, UNKNOWN_FIBER_HINTS)
     ):
-        washing_tip = None
-    if washing_tip:
-        washing = WASHING_TIPS[washing_tip]
-    if tips and tips.drying:
-        drying = DRYING_TIPS[tips.drying]
-    lines = []
-    has_washing_details = label.max_wash_temperature_c is not None or label.wash_cycle is not None or re.search(
-        r"세제|세탁망|섬유유연제|detergent|softener|mesh bag", notes, re.IGNORECASE,
+        return []
+
+    hand_wash_note = _has_note(cleaning_notes, r"손세탁|hand[ -]wash")
+    hand_wash_denied = _has_note(cleaning_notes, r"손세탁(?:은|을)?\s*(?:금지|하지)|do not hand[ -]wash")
+    machine_wash_denied = _has_note(
+        cleaning_notes, r"세탁기(?:를|는)?\s*(?:사용\s*)?(?:금지|하지)|do not machine[ -]wash",
     )
-    if washing and not has_washing_details:
-        permission = "세탁기 사용" if washing_tip == "mesh_bag" else "물세탁"
-        lines.append(washing if method else f"라벨에서 {permission}을 허용하면 {washing}")
-    drying_is_specified = any(field is not None for field in (
-        label.natural_dry, label.tumble_dry_allowed, label.dry_in_shade,
-    )) or re.search(r"건조|말리|(?:tumble|air|line) dry|dry flat", notes, re.IGNORECASE)
-    if drying and not drying_is_specified:
-        lines.append(drying)
-    return [MATERIAL_PREFIX + line for line in lines]
+    hand_wash_allowed = (method == "hand_wash" or hand_wash_note) and not hand_wash_denied
+    machine_wash_allowed = method == "machine_wash" and not machine_wash_denied and not hand_wash_allowed
+    has_stretch = "stretch" in fibers
+    detailed_cotton_stretch = bool(
+        {"cotton", "stretch"} <= fibers and fibers & {"polyester", "nylon", "acrylic"}
+    )
+    sweatshirt = _has_note(
+        normalize("NFKC", garment_description).casefold(),
+        r"맨투맨|스웨트|스웻|후드|후디|sweatshirt|hoodie|sweat",
+    )
+
+    # The material and the label are separate sources: skip only the topic the label has answered.
+    water_specified = label.max_wash_temperature_c is not None or _has_note(
+        special_notes,
+        r"(?:세탁|물)\s*(?:온도|온수|찬물|미온수)|뜨거운\s*물|찬물|미지근한\s*물|"
+        r"\b(?:cold|warm|hot)\s+wash\b|(?:(?:세탁|물|wash).{0,20})\b\d+\s*°?\s*c\b|"
+        r"(?:(?:세탁|물|wash).{0,12})(?:고온|저온)",
+    )
+    cycle_specified = label.wash_cycle is not None or _has_note(
+        special_notes, r"세탁\s*코스|울\s*코스|섬세\s*코스|약하게\s*세탁|\b(?:gentle|delicate|wool)\s+(?:wash|cycle)\b",
+    )
+    detergent_specified = _has_note(detergent_notes, r"세제|detergent|soap|비누")
+    handling_specified = _has_note(special_notes, r"뒤집|세탁망|비비|마찰|inside out|mesh bag|rub|agitat")
+    bleach_specified = label.bleach is not None or _has_note(bleach_notes, r"표백|bleach")
+    spin_specified = _has_note(special_notes, r"탈수|spin")
+    drying_specified = any(field is not None for field in (
+        label.natural_dry, label.tumble_dry_allowed, label.tumble_dry_heat, label.dry_in_shade,
+    )) or _has_note(special_notes, r"건조|말리|(?:tumble|air|line) dry|dry flat|dryer")
+    ironing_specified = label.ironing is not None or _has_note(ironing_notes, r"다림질|다리미|\biron(?:ing)?\b")
+    lines = []
+
+    if not water_specified:
+        if "wool" in fibers:
+            body = "울은 열과 급격한 온도 변화에 줄거나 펠트화할 수 있어요. 물세탁이 허용되면 찬물에서 다루세요."
+        elif "silk" in fibers:
+            body = "실크는 열과 마찰에 약해요. 물세탁이 허용되면 찬물에서 짧게 다루세요."
+        elif "rayon" in fibers:
+            body = "레이온·비스코스 계열은 젖었을 때 약해질 수 있어요. 물세탁이 허용되면 찬물에서 짧고 약하게 세탁하세요."
+        elif detailed_cotton_stretch and sweatshirt:
+            body = "면이 포함된 몸판은 고온에서 줄 수 있고 폴리우레탄이 든 시보리 등 신축 부위는 열과 강한 마찰로 탄성이 약해질 수 있어요. 물세탁이 허용되면 찬물 또는 30°C 이하의 미온수를 권해요."
+        elif detailed_cotton_stretch:
+            body = "면이 포함된 원단은 고온에서 줄 수 있고 폴리우레탄 혼방의 신축 부위는 열과 강한 마찰로 탄성이 약해질 수 있어요. 물세탁이 허용되면 찬물 또는 30°C 이하의 미온수를 권해요."
+        elif "cotton" in fibers:
+            body = "면은 뜨거운 물에서 줄어들 수 있어요. 물세탁이 허용되면 찬물 또는 30°C 이하의 미온수를 권해요."
+        elif "linen" in fibers:
+            body = "마 섬유는 뜨거운 물에서 줄거나 구김이 커질 수 있어요. 물세탁이 허용되면 찬물 또는 30°C 이하의 미온수를 권해요."
+        elif fibers & {"polyester", "nylon", "acrylic", "stretch"}:
+            body = "합성섬유와 신축 섬유는 고온에 약할 수 있어요. 물세탁이 허용되면 찬물 또는 30°C 이하의 미온수로 세탁하는 편이 안전해요."
+        else:
+            body = None
+        if body:
+            lines.append(_material_line("물 온도", body))
+
+    if not cycle_specified:
+        if machine_wash_allowed:
+            if detailed_cotton_stretch or fibers & {"wool", "silk", "rayon"}:
+                body = "라벨의 허용 범위에서 울·섬세 코스를 사용하세요."
+            elif fibers & {"linen", "cotton"}:
+                body = "라벨의 허용 범위에서 약한 코스를 선택하면 마찰을 줄일 수 있어요."
+            else:
+                body = "라벨의 허용 범위에서 약한 코스를 선택하세요."
+        elif hand_wash_allowed:
+            body = "손세탁 지시가 있으면 찬물에서 부드럽게 눌러 세탁하고 비비거나 비틀지 마세요."
+        elif machine_wash_denied or hand_wash_denied or hand_wash_note:
+            body = None
+        else:
+            hand_wash_tip = "" if hand_wash_denied else ", 손세탁이 허용되면 부드럽게 손세탁하세요"
+            body = "세탁기 사용이 라벨에 허용되면 울·섬세 코스를" + hand_wash_tip + "."
+        if body:
+            lines.append(_material_line("세탁 방식", body))
+
+    if not detergent_specified:
+        if "wool" in fibers:
+            detergent = "물세탁이 허용되면 울 전용 중성세제를 소량 사용하세요."
+        elif "silk" in fibers:
+            detergent = "물세탁이 허용되면 실크용 또는 순한 중성세제를 소량 사용하세요."
+        elif detailed_cotton_stretch or has_stretch:
+            detergent = "물세탁이 허용되면 순한 중성세제를 소량 사용하고 섬유유연제와 표백 성분 세제는 피하는 편이 안전해요."
+        elif fibers & {"rayon", "linen", "cotton", "polyester", "nylon", "acrylic"}:
+            detergent = "물세탁이 허용되면 순한 중성세제를 권장량보다 많이 쓰지 마세요."
+        else:
+            detergent = None
+        if detergent:
+            lines.append(_material_line("세제", detergent))
+
+    if not handling_specified:
+        if machine_wash_allowed:
+            if detailed_cotton_stretch:
+                handling = "옷을 뒤집어 세탁망에 넣으면 시보리 등 신축 부위와 겉면의 마찰을 줄일 수 있어요."
+            elif fibers & {"silk", "wool"}:
+                handling = "세탁기 사용이 라벨에 허용된 경우에만 세탁망에 넣고, 비비거나 비틀지 마세요."
+            else:
+                handling = "옷을 뒤집어 세탁망에 넣으면 옷감의 마찰과 보풀을 줄일 수 있어요."
+        elif hand_wash_allowed:
+            handling = "뒤집어 부드럽게 눌러 세탁하고 비비거나 비틀어 짜지 마세요."
+        elif not machine_wash_denied and not hand_wash_denied and not hand_wash_note:
+            handling = "세탁기 사용이 라벨에 허용되면 옷을 뒤집어 세탁망에 넣어 마찰을 줄이세요."
+        else:
+            handling = None
+        if handling:
+            lines.append(_material_line("마찰", handling))
+
+    if not bleach_specified and (detailed_cotton_stretch or has_stretch or fibers & {"silk", "wool"}):
+        lines.append(_material_line("표백", "표백제는 색과 섬유, 신축성을 손상할 수 있어 피하는 편이 안전해요."))
+
+    if (
+        not hand_wash_allowed and not machine_wash_denied and not spin_specified
+        and (detailed_cotton_stretch or has_stretch)
+    ):
+        lines.append(_material_line("탈수", "세탁기 사용이 라벨에 허용되면 짧고 낮은 강도로 탈수해 물기만 빼세요."))
+
+    if not drying_specified:
+        if detailed_cotton_stretch:
+            dry = "고온 건조는 면 수축과 신축 부위의 탄성 저하 우려가 있어요. 모양을 잡아 그늘에서 평평하게 자연 건조하세요."
+        elif tips and tips.drying == "dry_flat":
+            dry = DRYING_TIPS["dry_flat"]
+        elif tips and tips.drying == "dry_in_shade":
+            dry = DRYING_TIPS["dry_in_shade"]
+        elif fibers & {"wool", "silk", "rayon"}:
+            dry = "비틀어 짜지 말고 모양을 잡아 평평하게 그늘에서 자연 건조하세요."
+        elif fibers & {"cotton", "linen", "polyester", "nylon", "acrylic", "stretch"}:
+            dry = "열 건조로 줄거나 손상될 수 있어요. 모양을 잡아 그늘에서 자연 건조하세요."
+        else:
+            dry = DRYING_TIPS["reshape_and_air_dry"]
+        lines.append(_material_line("건조", dry))
+
+    if not ironing_specified and (detailed_cotton_stretch or has_stretch or fibers & {"silk", "wool", "rayon"}):
+        if detailed_cotton_stretch or has_stretch:
+            ironing = "다림질이 허용된 경우에만 얇은 천을 덮고 저온으로 짧게 다리세요. 110°C는 보수적 참고값일 뿐이며 라벨의 허용 온도가 우선이에요."
+        else:
+            ironing = "다림질이 허용된 경우에만 얇은 천을 덮고 저온으로 짧게 다리세요."
+        lines.append(_material_line("다림질", ironing))
+
+    return lines
 
 
 def request_care_label_for_unmatched_product(result: AnalysisResponse) -> AnalysisResponse:

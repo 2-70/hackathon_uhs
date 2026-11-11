@@ -4,7 +4,7 @@ import { router, useLocalSearchParams } from 'expo-router';
 import { useRef, useState, type ReactNode } from 'react';
 import { Image, Linking, Platform, Pressable, StyleSheet, Text, useWindowDimensions, View, type TextInputInstance } from 'react-native';
 
-import { analyzePhoto, type Analysis, type PhotoKind, type UploadPhoto } from '../src/analysis';
+import { analyzePhoto, parseMaterialGuidance, type Analysis, type PhotoKind, type UploadPhoto } from '../src/analysis';
 import { blankGarment } from '../src/mock';
 import type { Garment, GarmentDraft, GarmentPhotos } from '../src/model';
 import { basketLimit, useLaundry } from '../src/store';
@@ -710,22 +710,26 @@ function AnalysisReport({ result, kind, busy, onApply, onNext }: {
   onNext: (result: Analysis) => void;
 }) {
   const { care } = result;
+  const matchedWithoutCare = result.status === 'exact' && !result.hasPublishedCare;
   const nextLabel = result.followUp === 'label'
-    ? (kind === 'label' ? '라벨 사진 다시 선택' : '세탁 라벨 추가')
+    ? (kind === 'label' ? '라벨 사진 다시 선택' : '세탁 라벨 촬영')
     : result.followUp === 'clothing' ? '추가 사진 선택' : '직접 입력';
   const reportTone = result.status === 'needs-confirmation' ? palette.lilac : palette.aqua;
   const showsTips = result.status !== 'label' && Boolean(result.guidance.length || result.materialGuidance.length);
-  const note = showsTips
-    ? result.followUp === 'label' ? result.followUpInstructions : undefined
-    : result.message;
+  const noCareMessage = '세탁 정보를 확실하게 알 수 없어요. 세탁 라벨을 찍어주세요.';
+  const materialLabelPrompt = '더 확실하게 알고 싶으면 세탁 라벨을 찍어주세요.';
+  const note = result.materialGuidance.length > 0
+    ? undefined
+    : matchedWithoutCare ? noCareMessage
+      : showsTips ? result.followUp === 'label' ? result.followUpInstructions : undefined
+        : result.message;
   const canApply = result.status !== 'needs-confirmation';
-  const matchedWithoutCare = result.status === 'exact' && (result.estimated || !result.guidance.length);
   return (
     <View style={[local.report, { backgroundColor: reportTone }]}>
       <View style={local.reportHeading} accessibilityLiveRegion="polite">
         <View style={local.reportIcon}><Ionicons name="scan-outline" size={23} color={palette.accent} /></View>
         <Text accessibilityRole="header" style={local.reportTitle}>
-          {matchedWithoutCare ? '상품을 찾았어요' : result.estimated ? '옷 종류에 맞춘 일반 관리 팁' : resultLabels[result.status]}
+          {result.estimated ? '옷 종류에 맞춘 일반 관리 팁' : matchedWithoutCare ? '상품을 찾았어요' : resultLabels[result.status]}
         </Text>
         {result.estimated && result.searchNote && <Text style={local.caption}>{result.searchNote}</Text>}
         {care.name && <Text style={local.fieldLabel}>{care.name}</Text>}
@@ -733,16 +737,34 @@ function AnalysisReport({ result, kind, busy, onApply, onNext }: {
         {care.material && <Text style={local.caption}>{care.material}</Text>}
       </View>
       <View style={local.reportPending}>
-        {showsTips && matchedWithoutCare && result.estimated && (
-          <Text style={local.caption}>이 상품의 공개된 세탁 안내를 찾지 못해 옷 종류에 맞춘 일반 팁을 보여드려요.</Text>
+        {showsTips && result.guidance.length > 0 && (
+          <>
+            {result.status === 'exact' && <Text style={local.fieldLabel}>{result.sourceLabel}에서 확인한 안내</Text>}
+            {result.guidance.map((line) => <Text key={line} style={styles.body}>{line}</Text>)}
+          </>
         )}
-        {showsTips && result.guidance.map((line) => <Text key={line} style={styles.body}>{line}</Text>)}
         {showsTips && result.materialGuidance.length > 0 && (
-          <Text style={local.fieldLabel}>소재 기준 관리 팁</Text>
+          <View style={local.estimatedPanel}>
+            <Text style={local.fieldLabel}>소재 기반 참고 안내 · 임시 추정</Text>
+            {result.materialGuidance.map((line, index) => {
+              const item = parseMaterialGuidance(line);
+              return (
+                <View key={`${line}-${index}`} style={local.materialTip}>
+                  {item ? (
+                    <View style={local.materialTipLabeled}>
+                      <View accessible={false} style={local.materialTipBullet} />
+                      <View style={local.materialTipContent}>
+                        <Text style={local.materialTipLabel}>{item.label}</Text>
+                        <Text style={styles.body}>{item.instruction}</Text>
+                      </View>
+                    </View>
+                  ) : <Text style={styles.body}>{line}</Text>}
+                </View>
+              );
+            })}
+            <Text style={local.estimatedPrompt}>{materialLabelPrompt}</Text>
+          </View>
         )}
-        {showsTips && result.materialGuidance.map((line) => (
-          <Text key={line} style={styles.body}>{line}</Text>
-        ))}
         {note && <Text style={styles.body}>{note}</Text>}
       </View>
       {result.sourceUrl && (
@@ -863,4 +885,11 @@ const local = StyleSheet.create({
   },
   reportTitle: { color: palette.ink, fontSize: 19, fontWeight: '800', textAlign: 'center' },
   reportPending: { backgroundColor: palette.surface, padding: 11, borderRadius: 12, gap: 4 },
+  estimatedPanel: { gap: 7, padding: 11, borderRadius: 12, backgroundColor: palette.subtle },
+  materialTip: { gap: 2, paddingBottom: 4 },
+  materialTipLabeled: { flexDirection: 'row', alignItems: 'flex-start', gap: 8 },
+  materialTipBullet: { width: 6, height: 6, marginTop: 9, borderRadius: 3, backgroundColor: palette.accent },
+  materialTipContent: { flex: 1, gap: 2 },
+  materialTipLabel: { color: palette.accent, fontSize: 17, lineHeight: 24, fontWeight: '800' },
+  estimatedPrompt: { color: palette.accent, fontSize: 13, lineHeight: 19, fontWeight: '700' },
 });
