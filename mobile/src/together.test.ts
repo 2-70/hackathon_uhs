@@ -110,8 +110,63 @@ test('the machine guide shows confirmed panel labels and asks for missing numeri
   assert.ok(soft.steps.some((line) => line.includes('Medium')));
   assert.ok(soft.checks.some((line) => line.includes('30°C 이하')));
   assert.ok(soft.checks.some((line) => line.includes('600 rpm 이하')));
-  assert.equal(machineGuide([garment('티셔츠', { maxTemp: 40 })], { ...levelMachine, courses: levelMachine.courses.slice(1) }), null);
+  const needsTemperatureCheck = machineGuide([garment('티셔츠', { maxTemp: 40 })], { ...levelMachine, courses: levelMachine.courses.slice(1) });
+  assert.ok(needsTemperatureCheck?.checks.some((line) => line.includes('실제 물 온도')));
   assert.equal(machineGuide([garment('티셔츠', {})], { ...levelMachine, courses: [] }), null);
+});
+
+test('the machine-aware plan uses model settings and keeps unknown numeric values confirmation-required', () => {
+  const machine: Machine = {
+    ...levelMachine,
+    courses: [{ ...levelMachine.courses[0], verifiedSettings: [setting('warm-medium', 'Warm', 'Medium')] }],
+  };
+  const item = garment('라벨 블라우스', { gentle: true, maxTemp: 30, maxSpin: 600 });
+  const guide = machineGuide([item], machine);
+  assert.ok(guide);
+  assert.ok(guide.steps.some((line) => line.includes('Warm')));
+  assert.ok(guide.checks.some((line) => line.includes('실제 물 온도')));
+  assert.ok(guide.checks.some((line) => line.includes('실제 회전수')));
+
+  const plan = planTogether([item], machine);
+  assert.equal(plan.loads.length, 1);
+  assert.equal(machineGuide(plan.loads[0].garments, machine)?.setting.id, 'warm-medium');
+  assert.equal(planTogether([item]).loads[0].label, '색상 미확인 · 단독 세탁 · 약한 세탁');
+});
+
+test('the same garment gets model-specific settings and unknown placeholders are never suggested', () => {
+  const item = garment('셔츠', { gentle: true, maxTemp: 30, maxSpin: 600 });
+  const modelA: Machine = {
+    ...levelMachine,
+    courses: [{ id: 'a', name: 'A 섬세', panelName: 'A Delicate', gentle: true, settings: [], verifiedSettings: [setting('a-setting', '30°C', '600 rpm', { temperatureCelsius: 30, spinRpm: 600 })] }],
+  };
+  const modelB: Machine = {
+    ...levelMachine,
+    id: 'm2', model: 'WM-B',
+    courses: [{ id: 'b', name: 'B 섬세', panelName: 'B Gentle', gentle: true, settings: [], verifiedSettings: [setting('b-setting', 'Cold', 'Low', { temperatureCelsius: 30, spinRpm: 400 })] }],
+  };
+  assert.equal(machineGuide([item], modelA)?.setting.id, 'a-setting');
+  assert.equal(machineGuide([item], modelB)?.setting.id, 'b-setting');
+  const unknown = { ...modelA, courses: [{ ...modelA.courses[0], verifiedSettings: [setting('unknown', '미확인', '600 rpm', { temperatureCelsius: null, spinRpm: 600 })] }] };
+  assert.equal(machineGuide([item], unknown), null);
+});
+
+test('the selected model separates a shared load when only individual setting combinations fit', () => {
+  const machine: Machine = {
+    ...levelMachine,
+    courses: [
+      { id: 'cool-high', name: 'Cool high', gentle: false, settings: [], verifiedSettings: [setting('cool-high', '30°C', '1400 rpm', { temperatureCelsius: 30, spinRpm: 1400 })] },
+      { id: 'warm-low', name: 'Warm low', gentle: false, settings: [], verifiedSettings: [setting('warm-low', '40°C', '600 rpm', { temperatureCelsius: 40, spinRpm: 600 })] },
+    ],
+  };
+  const plan = planTogether([
+    garment('셔츠', { color: '검정', maxTemp: 30, maxSpin: 1400 }),
+    garment('바지', { color: '검정', maxTemp: 40, maxSpin: 600 }),
+  ], machine);
+  assert.equal(plan.loads.length, 2);
+  assert.deepEqual(plan.loads.map(({ garments }) => garments[0].name), ['셔츠', '바지']);
+  assert.deepEqual(plan.loads.map(({ garments }) => machineGuide(garments, machine)?.setting.id), ['cool-high', 'warm-low']);
+  assert.match(plan.loads[0].advice, /1400rpm 이하/);
+  assert.match(plan.loads[1].advice, /600rpm 이하/);
 });
 
 test('a lower confirmed combination wins when the default exceeds a garment limit', () => {
@@ -133,4 +188,5 @@ test('a lower confirmed combination wins when the default exceeds a garment limi
   assert.equal(checkLoadSetting([item], machine, 'd', 30, 600).status, 'ok');
   assert.equal(checkLoadSetting([item], machine, 'd', 40, 1000).status, 'adjust');
   assert.equal(checkLoadSetting([item], machine, 'd', 25, 600).status, 'unknown');
+  assert.equal(checkLoadSetting([{ ...item, maxTemp: null }], machine, 'd', 30, 600).status, 'unknown');
 });

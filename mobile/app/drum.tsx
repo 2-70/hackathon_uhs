@@ -22,10 +22,11 @@ export default function Drum() {
     return basketIds.flatMap((id) => wardrobe.get(id) ?? []);
   }, [garments, basketIds]);
   const [unchecked, setUnchecked] = useState<string[]>([]);
-  const [completed, setCompleted] = useState<{ garments: Garment[]; plan: TogetherPlan } | null>(null);
+  const [completed, setCompleted] = useState<{ garments: Garment[]; plan: TogetherPlan; machine: Machine | null } | null>(null);
   const selection = contents.filter(({ id }) => !unchecked.includes(id));
   const together = completed?.garments.length === selection.length
-    && selection.every((item, index) => item === completed.garments[index]) ? completed.plan : null;
+    && selection.every((item, index) => item === completed.garments[index])
+    && completed.machine === machine ? completed.plan : null;
   const scrollRef = useRef<ScrollViewInstance>(null);
   const planTop = useRef(0);
   const openPlanOnLayout = useRef(false);
@@ -40,7 +41,7 @@ export default function Drum() {
   function startPlan() {
     if (!selection.length) return;
     openPlanOnLayout.current = true;
-    setCompleted({ garments: selection, plan: planTogether(selection) });
+    setCompleted({ garments: selection, plan: planTogether(selection, machine), machine });
   }
 
   function renderAction() {
@@ -284,13 +285,13 @@ function MachineSteps({ garments, machine }: { garments: Garment[]; machine: Mac
     const hasSettings = machine.courses.some((course) => course.verifiedSettings?.length);
     return <Notice>{hasSettings
       ? '이 묶음에 맞는 설정을 확인하지 못했어요. 옷 라벨의 온도·세탁 강도와 모델 설명서를 확인해 주세요.'
-      : '이 모델의 확인된 코스·온도·탈수 조합이 아직 없어요.'}</Notice>;
+      : '이 모델의 확인된 코스·온도·탈수 조합이 아직 없어요. 라벨과 설명서에서 지원 코스와 온도·탈수를 확인한 뒤 설정하세요.'}</Notice>;
   }
   return (
     <View style={drum.validation}>
       <Text style={styles.rowTitle}>{machine.maker} {machine.model} {guide.checks.length ? '확인할 설정' : '설정 방법'}</Text>
+      {guide.checks.length > 0 && <Notice>{`이 조합은 조건부예요. 아래 값을 확인하기 전에는 설정을 적용하지 마세요.\n${guide.checks.join('\n')}`}</Notice>}
       {guide.steps.map((line, index) => <Text key={line} style={styles.body}>{index + 1}. {line}</Text>)}
-      {guide.checks.length > 0 && <Notice>{guide.checks.join('\n')}</Notice>}
       <ManualLink url={guide.sourceUrl} label="공식 설명서에서 설정 보기" />
       {guide.setting.temperatureCelsius !== null && guide.setting.spinRpm !== null && (
         <Validation key={`${machine.id}-${guide.setting.id}`} garments={garments} machine={machine}

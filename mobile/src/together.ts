@@ -68,7 +68,7 @@ function separationReason(first: Garment, second: Garment) {
   return null;
 }
 
-export function planTogether(garments: Garment[]): TogetherPlan {
+export function planTogether(garments: Garment[], machine?: Machine | null): TogetherPlan {
   const apart: TogetherPlan['apart'] = [];
   const pending: TogetherPlan['pending'] = [];
   const washable: Garment[] = [];
@@ -105,18 +105,47 @@ export function planTogether(garments: Garment[]): TogetherPlan {
   }
 
   const colorLabels = { light: '밝은색', deep: '진한색', unknown: '색상 미확인 · 단독 세탁' };
-  const loads = groups.map((items) => {
-    const gentle = items.some(isDelicate);
-    const veryGentle = items.some(({ washStrength }) => washStrength === 'very_gentle');
-    const label = isSolo(items[0]) ? '단독 세탁' : colorLabels[colorFamily(items[0].color)];
-    const strength = veryGentle ? '매우 약한 세탁' : '약한 세탁';
-    const spinLimits = items.flatMap(({ maxSpin }) => maxSpin == null ? [] : [maxSpin]);
-    const spin = spinLimits.length ? ` 탈수는 ${Math.min(...spinLimits)}rpm 이하로 맞추세요.` : '';
-    return {
-      garments: items,
-      label: `${label}${gentle ? ` · ${strength}` : ''}`,
-      advice: `${waterAdvice(items)}${gentle ? ` ${strength}이 가능한 코스를 골라 주세요.` : ''}${spin}`,
+  const loads = groups.flatMap((items) => {
+    const makeLoad = (subset: Garment[], suffix = '') => {
+      const gentle = subset.some(isDelicate);
+      const veryGentle = subset.some(({ washStrength }) => washStrength === 'very_gentle');
+      const label = isSolo(subset[0]) ? '단독 세탁' : colorLabels[colorFamily(subset[0].color)];
+      const strength = veryGentle ? '매우 약한 세탁' : '약한 세탁';
+      const spinLimits = subset.flatMap(({ maxSpin }) => maxSpin == null ? [] : [maxSpin]);
+      const spin = spinLimits.length ? ` 탈수는 ${Math.min(...spinLimits)}rpm 이하로 맞추세요.` : '';
+      return {
+        garments: subset,
+        label: `${label}${gentle ? ` · ${strength}` : ''}${suffix}`,
+        advice: `${waterAdvice(subset)}${gentle ? ` ${strength}이 가능한 코스를 골라 주세요.` : ''}${spin}`,
+      };
     };
+    const base = makeLoad(items);
+    const wholeGuide = machine ? machineGuide(items, machine) : null;
+    if (!machine || (wholeGuide && wholeGuide.checks.length === 0)
+      || !machine.courses.some((course) => course.verifiedSettings?.length)) return [base];
+
+    // Preserve the existing color/material groups, but divide a load if the
+    // selected model has confirmed settings for smaller subsets.
+    const supported: Garment[][] = [];
+    const unresolved: Garment[] = [];
+    for (const item of items) {
+      const target = supported.find((candidate) => {
+        const guide = machineGuide([...candidate, item], machine);
+        return guide !== null && guide.checks.length === 0;
+      });
+      if (target) target.push(item);
+      else {
+        const individualGuide = machineGuide([item], machine);
+        if (individualGuide && individualGuide.checks.length === 0) supported.push([item]);
+        else unresolved.push(item);
+      }
+    }
+    const split = supported.map((subset) => makeLoad(subset, subset.length === 1 ? ' · 모델 설정 확인' : ''));
+    if (unresolved.length) split.push({
+      ...makeLoad(unresolved, unresolved.length === 1 ? ' · 설정 확인 필요' : ''),
+      advice: `${makeLoad(unresolved).advice} 선택한 세탁기에서 이 옷에 맞는 확인된 조합을 찾지 못했어요. 설명서와 라벨을 확인해 주세요.`,
+    });
+    return split;
   });
 
   const cautions: string[] = [];
@@ -171,7 +200,6 @@ export type MachineGuide = {
 };
 
 const strengthRank = { very_gentle: 0, gentle: 1, normal: 2 } as const;
-const coldStage = /^(tap cold|cold|냉수|찬물)$/i;
 const strongSpin = /^(extra high|high|강|최강|강력)$/i;
 
 function maximumStrength(garments: Garment[]) {
@@ -195,8 +223,8 @@ export function machineGuide(garments: Garment[], machine: Machine): MachineGuid
   const options = machine.courses.flatMap((course) => (course.verifiedSettings ?? [])
     .filter((setting) => {
       const strength = settingStrength(course, setting);
-      return strength <= maxStrength && !setting.dryLevel && setting.spin !== '미확인'
-        && (setting.temperatureCelsius === null ? coldStage.test(setting.temperature) : setting.temperatureCelsius <= maxTemp)
+      return strength <= maxStrength && !setting.dryLevel && setting.spin !== '미확인' && setting.temperature !== '미확인'
+        && (setting.temperatureCelsius === null ? true : setting.temperatureCelsius <= maxTemp)
         && (setting.spinRpm === null ? (maxStrength === strengthRank.normal || !strongSpin.test(setting.spin)) : setting.spinRpm <= maxSpin);
     })
     .map((setting) => ({ course, setting })));
@@ -234,7 +262,11 @@ export function checkLoadSetting(garments: Garment[], machine: Machine, courseId
     return { status: 'unknown', reasons: ['코스, 세탁 온도, 탈수 속도를 모두 입력해 주세요.'] };
   }
   const reasons: string[] = [];
+  const unknownReasons: string[] = [];
   for (const garment of garments) {
+    if (garment.wash !== 'machine' || garment.maxTemp === null || (garment.gentle === null && !garment.washStrength)) {
+      unknownReasons.push(`${garment.name}의 세탁 가능 여부·온도·강도를 확인해야 비교할 수 있어요.`);
+    }
     if (garment.maxTemp !== null && temp > garment.maxTemp) {
       reasons.push(`${garment.name}의 최대 세탁 온도는 ${garment.maxTemp}°C예요.`);
     }
@@ -248,6 +280,7 @@ export function checkLoadSetting(garments: Garment[], machine: Machine, courseId
     reasons.push('선택한 설정의 세탁 강도가 이 묶음의 허용 범위를 넘어가요.');
   }
   if (reasons.length) return { status: 'adjust', reasons };
+  if (unknownReasons.length) return { status: 'unknown', reasons: unknownReasons };
   if (!options.length) {
     return { status: 'unknown', reasons: ['이 코스의 해당 온도·탈수 조합은 설명서에서 확인되지 않았어요.'] };
   }
