@@ -5,7 +5,7 @@ import { ActivityIndicator, Image, Pressable, StyleSheet, Text, View, type Scrol
 import { calculatePlan, validateSettings } from '../src/mock';
 import type { Garment, Machine, Plan } from '../src/model';
 import { basketLimit, useLaundry } from '../src/store';
-import { Button, Chip, Field, Notice, ProgressRing, Screen, palette, styles } from '../src/ui';
+import { Button, Chip, Field, Notice, Screen, palette, styles } from '../src/ui';
 
 type PlanInput = { garments: Garment[]; machine: Machine };
 type PlanRequest = {
@@ -86,18 +86,17 @@ export default function Drum() {
 
   return (
     <Screen scrollRef={scrollRef}>
-      <Text accessibilityRole="header" style={drum.heading}>가상 드럼</Text>
       {loadError && <Notice tone="error">{loadError}</Notice>}
 
-      <View style={drum.load}>
+      <View style={[styles.card, styles.cardContent, drum.load]}>
         <LoadReadout count={contents.length} />
-        <View style={drum.machineRow}>
-          <View style={drum.machineIcon} importantForAccessibility="no-hide-descendants">
-            <Ionicons name="options-outline" size={19} color={palette.accent} />
+        <View style={[styles.card, drum.machineRow]}>
+          <View style={styles.iconBadge} importantForAccessibility="no-hide-descendants">
+            <Ionicons name="water-outline" size={19} color={palette.accent} />
           </View>
           <View style={drum.itemName}>
-            <Text style={drum.label}>세탁기</Text>
-            <Text style={drum.rowTitle}>{machine ? machine.maker + ' ' + machine.model : '미등록'}</Text>
+            <Text style={styles.rowMeta}>선택한 세탁기</Text>
+            <Text style={styles.rowTitle}>{machine ? machine.maker + ' ' + machine.model : '모델 미등록'}</Text>
           </View>
           {(machine || contents.length === 0) && (
             <Pressable
@@ -116,7 +115,7 @@ export default function Drum() {
       </View>
 
       {contents.length > 0 && (
-        <View style={drum.collection}>
+        <View style={[styles.card, drum.collection]}>
           <View style={drum.sectionHeader}>
             <Text accessibilityRole="header" style={[styles.title, drum.itemName]}>담은 옷</Text>
             {contents.length < basketLimit && (
@@ -132,14 +131,14 @@ export default function Drum() {
           </View>
           {contents.map((garment) => (
             <View key={garment.id} style={drum.item}>
-              <View style={drum.thumbnail}>
+              <View style={[styles.iconBadge, drum.thumbnail]}>
                 {garment.photo ? <Image source={{ uri: garment.photo }} style={drum.photo} /> : (
                   <Ionicons name="shirt-outline" size={19} color={palette.accent} />
                 )}
               </View>
               <View style={drum.itemName}>
-                <Text style={drum.rowTitle}>{garment.name}</Text>
-                {!!garment.material && <Text style={drum.label}>{garment.material}</Text>}
+                <Text style={styles.rowTitle}>{garment.name}</Text>
+                {!!garment.material && <Text style={styles.rowMeta}>{garment.material}</Text>}
               </View>
               <Pressable
                 style={({ pressed }) => [drum.remove, pressed && styles.dimmed]}
@@ -170,36 +169,21 @@ export default function Drum() {
 }
 
 function LoadReadout({ count }: { count: number }) {
-  const remaining = Math.max(0, basketLimit - count);
-
   return (
     <View
       accessible
-      accessibilityLabel={'드럼에 담은 옷 ' + count + '벌, 최대 ' + basketLimit + '벌'}
+      accessibilityLabel={`담은 옷 ${count}벌`}
       accessibilityLiveRegion="polite"
       style={drum.readout}
     >
-      <ProgressRing value={count} max={basketLimit} size={156} thickness={10} color={palette.accent} track={palette.surface}>
-        <View style={drum.ringLabel}>
-          <Text style={drum.count}>{count}<Text style={drum.countUnit}>벌</Text></Text>
-          <Text style={drum.label}>담은 옷</Text>
-        </View>
-      </ProgressRing>
-      <View style={drum.loadMetrics}>
-        <View style={drum.loadMetric}>
-          <Text style={drum.metricValue}>{remaining}벌</Text>
-          <Text style={drum.label}>더 담을 수 있는 옷</Text>
-        </View>
-        <View style={drum.metricDivider} />
-        <View style={drum.loadMetric}>
-          <Text style={drum.metricValue}>{basketLimit}벌</Text>
-          <Text style={drum.label}>드럼 한도</Text>
-        </View>
+      <View style={drum.loadCircle}>
+        <Ionicons name="shirt-outline" size={20} color={palette.accent} />
+        <Text style={drum.count}>{count}<Text style={drum.countUnit}>벌</Text></Text>
+        <Text style={styles.rowMeta}>담은 옷</Text>
       </View>
     </View>
   );
 }
-
 function PlanDetails({ plan, machine, garments }: { plan: Plan; machine: Machine; garments: Garment[] }) {
   const router = useRouter();
   const [validationGroup, setValidationGroup] = useState<string | null>(null);
@@ -208,7 +192,7 @@ function PlanDetails({ plan, machine, garments }: { plan: Plan; machine: Machine
     <View style={drum.results}>
       <View style={drum.resultHeading}>
         <Text accessibilityRole="header" style={styles.title}>세탁 계획 · {plan.groups.length}회</Text>
-        <Text style={styles.muted}>샘플 코스 및 관리정보 기준 · 적재 용량 미검증</Text>
+        <Text style={styles.muted}>샘플 코스·관리정보 기준 · 적재 용량 미검증</Text>
       </View>
       {plan.groups.map((group, index) => {
         const expanded = validationGroup === group.id;
@@ -218,13 +202,13 @@ function PlanDetails({ plan, machine, garments }: { plan: Plan; machine: Machine
           { label: '탈수', value: group.spin === 0 ? '사용 안 함' : group.spin + ' rpm' },
         ];
         return (
-          <View key={group.id} style={drum.group}>
+          <View key={group.id} style={[styles.card, drum.group]}>
             <Text style={drum.groupMeta}>{index + 1}회차 · {group.garments.length}벌 · {group.course.gentle ? '약한 세탁' : '일반 세탁'}</Text>
-            <Text style={drum.rowTitle}>{group.garments.map(({ name }) => name).join(', ')}</Text>
+            <Text style={styles.rowTitle}>{group.garments.map(({ name }) => name).join(', ')}</Text>
             <View style={drum.settings}>
               {settings.map(({ label, value }, cellIndex) => (
                 <View key={label} style={[drum.setting, cellIndex > 0 && drum.settingDivider]}>
-                  <Text style={drum.label}>{label}</Text>
+                  <Text style={styles.rowMeta}>{label}</Text>
                   <Text style={drum.settingValue}>{value}</Text>
                 </View>
               ))}
@@ -244,12 +228,12 @@ function PlanDetails({ plan, machine, garments }: { plan: Plan; machine: Machine
         );
       })}
       {plan.excluded.length > 0 && (
-        <View style={drum.resultSection}>
+        <View style={[styles.card, drum.resultSection]}>
           <Text accessibilityRole="header" style={styles.title}>별도 관리 · {plan.excluded.length}벌</Text>
           {plan.excluded.map(({ garment, reason }) => (
             <View key={garment.id} style={drum.excludedRow}>
               <View style={drum.itemName}>
-                <Text style={drum.rowTitle}>{garment.name}</Text>
+                <Text style={styles.rowTitle}>{garment.name}</Text>
                 <Text style={styles.muted}>{reason}</Text>
               </View>
               <Pressable
@@ -264,11 +248,11 @@ function PlanDetails({ plan, machine, garments }: { plan: Plan; machine: Machine
           ))}
         </View>
       )}
-      <View style={drum.resultSection}>
+      <View style={[styles.card, drum.resultSection]}>
         <Text accessibilityRole="header" style={styles.title}>건조 안내</Text>
         {garments.map((garment) => (
           <View key={garment.id} style={drum.dryingRow}>
-            <Text style={drum.rowTitle}>{garment.name}</Text>
+            <Text style={styles.rowTitle}>{garment.name}</Text>
             <Text style={[styles.body, garment.dryer === 'no' && drum.dryerCaution]}>{dryerStatus[garment.dryer]}</Text>
             <Text style={styles.muted}>{garment.drying || '자연건조 방법 확인 필요'}</Text>
           </View>
@@ -314,7 +298,7 @@ function Validation({ group, machine }: { group: Plan['groups'][number]; machine
 
   return (
     <View style={drum.validation}>
-      <Text style={drum.rowTitle}>실제 세탁기에서 고른 설정</Text>
+      <Text style={styles.rowTitle}>실제 세탁기에서 고른 설정</Text>
       <View style={styles.wrap}>
         {machine.courses.map((course) => (
           <Chip key={course.id} selected={courseId === course.id} onPress={() => change(setCourseId, course.id)}>
@@ -337,34 +321,26 @@ function Validation({ group, machine }: { group: Plan['groups'][number]; machine
 }
 
 const drum = StyleSheet.create({
-  heading: { color: palette.ink, textAlign: 'center', fontSize: 20, lineHeight: 28, fontWeight: '800' },
-  load: { gap: 13, padding: 15, borderRadius: 18, borderWidth: 1, borderColor: palette.line, backgroundColor: palette.surface },
-  readout: { alignItems: 'center', gap: 14, paddingHorizontal: 12, paddingTop: 14, paddingBottom: 8, borderRadius: 18, backgroundColor: palette.lilac },
-  ringLabel: { alignItems: 'center', gap: 1 },
-  count: { color: palette.ink, fontSize: 44, lineHeight: 52, fontWeight: '800', letterSpacing: -1.5, fontVariant: ['tabular-nums'] },
+  load: { gap: 13, padding: 15 },
+  readout: { padding: 12, borderRadius: 18, backgroundColor: palette.peach, alignItems: 'center' },
+  loadCircle: { width: 126, height: 126, alignSelf: 'center', borderRadius: 63, borderWidth: 9, borderColor: palette.surface, alignItems: 'center', justifyContent: 'center', backgroundColor: palette.peach },
+  count: { color: palette.ink, fontSize: 37, lineHeight: 42, fontWeight: '800', letterSpacing: -1.2, fontVariant: ['tabular-nums'] },
   countUnit: { color: palette.muted, fontSize: 16, letterSpacing: 0 },
-  loadMetrics: { width: '100%', flexDirection: 'row', alignItems: 'center', paddingTop: 11, paddingBottom: 3, borderTopWidth: 1, borderTopColor: palette.line },
-  loadMetric: { flex: 1, alignItems: 'center', gap: 3 },
-  metricValue: { color: palette.accent, fontSize: 18, lineHeight: 24, fontWeight: '800', fontVariant: ['tabular-nums'] },
-  metricDivider: { width: 1, height: 29, backgroundColor: palette.line },
-  machineRow: { flexDirection: 'row', alignItems: 'center', gap: 9, minHeight: 58, paddingVertical: 6, paddingHorizontal: 10, borderWidth: 1, borderColor: palette.line, borderRadius: 13, backgroundColor: palette.paper },
-  machineIcon: { width: 35, height: 35, justifyContent: 'center', alignItems: 'center', borderRadius: 12, backgroundColor: palette.accentWash },
+  machineRow: { flexDirection: 'row', alignItems: 'center', gap: 9, minHeight: 58, paddingVertical: 6, paddingHorizontal: 10, backgroundColor: palette.paper },
   action: { width: '100%', maxWidth: 270, alignSelf: 'center' },
-  label: { color: palette.muted, fontSize: 12, lineHeight: 17, fontWeight: '600' },
   link: { minHeight: 44, paddingHorizontal: 5, paddingVertical: 8, flexDirection: 'row', alignItems: 'center', gap: 3 },
   linkText: { color: palette.accent, fontSize: 13, lineHeight: 19, fontWeight: '700' },
   loading: { minHeight: 48, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 9, paddingHorizontal: 9, borderRadius: 13, backgroundColor: palette.accentWash },
-  collection: { paddingHorizontal: 13, paddingTop: 3, paddingBottom: 4, borderRadius: 16, borderWidth: 1, borderColor: palette.line, backgroundColor: palette.surface },
+  collection: { paddingHorizontal: 13, paddingTop: 3, paddingBottom: 4 },
   sectionHeader: { flexDirection: 'row', alignItems: 'center', gap: 8, minHeight: 44, paddingVertical: 3 },
   item: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 7, borderTopWidth: 1, borderTopColor: palette.line },
   itemName: { flex: 1, minWidth: 0 },
-  thumbnail: { width: 42, height: 42, alignItems: 'center', justifyContent: 'center', backgroundColor: palette.accentWash, borderRadius: 12, overflow: 'hidden' },
-  rowTitle: { color: palette.ink, fontSize: 15, lineHeight: 22, fontWeight: '700' },
+  thumbnail: { overflow: 'hidden' },
   photo: { width: '100%', height: '100%' },
   remove: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
   results: { gap: 11 },
   resultHeading: { paddingVertical: 4, gap: 4 },
-  group: { gap: 8, paddingHorizontal: 13, paddingTop: 13, paddingBottom: 4, borderRadius: 16, borderWidth: 1, borderColor: palette.line, backgroundColor: palette.surface },
+  group: { gap: 8, paddingHorizontal: 13, paddingTop: 13, paddingBottom: 4 },
   groupMeta: { color: palette.accent, fontSize: 12, lineHeight: 17, fontWeight: '700', fontVariant: ['tabular-nums'] },
   settings: { flexDirection: 'row', borderRadius: 12, backgroundColor: palette.subtle },
   setting: { flex: 1, minWidth: 0, paddingHorizontal: 9, paddingVertical: 9, gap: 3 },
@@ -372,7 +348,7 @@ const drum = StyleSheet.create({
   settingValue: { color: palette.ink, fontSize: 16, lineHeight: 21, fontWeight: '800', fontVariant: ['tabular-nums'] },
   validationToggle: { minHeight: 44, flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 6 },
   validation: { gap: 11, padding: 12, marginBottom: 8, borderRadius: 12, backgroundColor: palette.subtle },
-  resultSection: { padding: 13, gap: 10, borderRadius: 16, borderWidth: 1, borderColor: palette.line, backgroundColor: palette.surface },
+  resultSection: { padding: 13, gap: 10 },
   excludedRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingTop: 9, borderTopWidth: 1, borderTopColor: palette.line },
   dryingRow: { paddingTop: 9, gap: 2, borderTopWidth: 1, borderTopColor: palette.line },
   dryerCaution: { color: palette.error },

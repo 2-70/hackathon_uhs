@@ -1,12 +1,12 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { router } from 'expo-router';
 import { useState } from 'react';
-import { Image, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Image, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import type { Garment } from '../src/model';
 import { basketLimit, useLaundry } from '../src/store';
-import { Button, Notice, Screen, palette, styles } from '../src/ui';
+import { Button, Notice, Screen, ScreenHeader, SearchField, palette, styles } from '../src/ui';
 
 const careLabels: Record<Garment['wash'], string> = {
   machine: '기계 세탁',
@@ -44,7 +44,7 @@ export default function WardrobeScreen() {
     const omitted = addToBasket(selected.map(({ id }) => id));
     if (omitted > 0) {
       setSelectedIds((previous) => previous.filter((id) => !accepted.includes(id)));
-      setCapacityNotice(`드럼이 가득 찼어요. 선택한 의류 중 ${omitted}벌이 남았어요.`);
+      setCapacityNotice(`한 번에 ${basketLimit}벌까지 분석할 수 있어요. ${omitted}벌은 드럼에 담지 못했어요.`);
       return;
     }
     setSelectedIds([]);
@@ -69,53 +69,38 @@ export default function WardrobeScreen() {
 
   return (
     <View style={local.screen}>
-      <View style={local.hero}>
-        <View style={local.heroInner}>
-          <View style={local.heroHeading}>
-            <Text accessibilityRole="header" style={local.heroTitle}>내 옷장</Text>
-            {ready && !loadError && <Text style={local.heroCount}>의류 {garments.length}벌 · 샘플 모드</Text>}
-          </View>
+      <ScreenHeader
+        title="내 옷장"
+        action={(
           <Pressable
             accessibilityRole="button"
-            accessibilityLabel="의류 등록"
+            accessibilityLabel="옷 추가"
             onPress={() => router.push('/garment')}
-            style={({ pressed }) => [local.heroAction, pressed && styles.dimmed]}
+            style={({ pressed }) => [local.headerAction, pressed && styles.dimmed]}
           >
             <Ionicons name="add" size={20} color={palette.accent} />
-            <Text style={local.heroActionText}>등록</Text>
+            <Text style={local.headerActionText}>추가</Text>
           </Pressable>
-        </View>
-      </View>
+        )}
+      />
       <Screen>
-        <View style={local.search}>
-          <Ionicons name="search-outline" size={19} color={palette.accent} />
-          <TextInput
-            accessibilityLabel="의류 검색"
-            placeholder="이름, 종류, 색상, 소재"
-            placeholderTextColor={palette.muted}
-            value={query}
-            onChangeText={setQuery}
-            style={local.input}
-          />
-          {query.length > 0 && (
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel="검색어 지우기"
-              onPress={() => setQuery('')}
-              style={local.iconButton}
-            >
-              <Ionicons name="close" size={19} color={palette.muted} />
-            </Pressable>
-          )}
-        </View>
+        <SearchField
+          label="의류 검색"
+          value={query}
+          onChangeText={setQuery}
+          placeholder="이름, 종류, 색상, 소재"
+        />
         {loadError && <Notice tone="error">{loadError}</Notice>}
         {!ready && !loadError && <Notice>옷장을 불러오는 중이에요.</Notice>}
         {ready && !loadError && (
           <View style={local.inventory}>
             <View style={local.listHeader}>
-              <Text accessibilityRole="header" style={local.listTitle}>
-                {searchTerm ? `검색 결과 ${visible.length}벌` : '등록 의류'}
-              </Text>
+              <View style={local.listHeading}>
+                <Text accessibilityRole="header" style={local.listTitle}>
+                  {searchTerm ? `검색 결과 ${visible.length}벌` : '등록 의류'}
+                </Text>
+                <Text style={styles.rowMeta}>의류 {garments.length}벌 · 샘플 모드</Text>
+              </View>
               {basketIds.length > 0 && (
                 <Pressable
                   accessibilityRole="button"
@@ -129,15 +114,21 @@ export default function WardrobeScreen() {
             </View>
 
             {visible.length === 0 && (
-              <View style={local.empty}>
-                <Text style={styles.title}>{searchTerm ? '일치하는 의류가 없어요' : '등록한 의류가 없어요'}</Text>
-                <Text style={styles.muted}>{searchTerm ? '의류 이름이나 소재를 다시 확인해 보세요.' : '의류를 등록해 옷장에 추가하세요.'}</Text>
-                {searchTerm && <Button tone="secondary" onPress={() => setQuery('')}>검색어 지우기</Button>}
+              <View style={[styles.card, styles.cardContent, local.empty]}>
+                <View style={styles.iconBadge} accessible={false}>
+                  <Ionicons name={searchTerm ? 'search-outline' : 'shirt-outline'} size={21} color={palette.accent} />
+                </View>
+                <Text style={styles.title}>{searchTerm ? '찾는 옷이 없어요' : '옷장이 비어 있어요'}</Text>
+                {searchTerm ? (
+                  <Button tone="secondary" onPress={() => setQuery('')}>검색어 지우기</Button>
+                ) : (
+                  <Button icon="add" onPress={() => router.push('/garment')}>옷 추가</Button>
+                )}
               </View>
             )}
 
             {visible.length > 0 && (
-              <View style={local.list}>
+              <View style={[styles.card, local.list]}>
                 {visible.map((garment, index) => {
                   const inBasket = basketIds.includes(garment.id);
                   const checked = selectedIds.includes(garment.id) && !inBasket;
@@ -162,22 +153,30 @@ export default function WardrobeScreen() {
                             )}
                           </View>
                           {garment.photo ? (
-                            <Image source={{ uri: garment.photo }} style={local.thumb} />
+                            <Image source={{ uri: garment.photo }} style={local.thumbImage} />
                           ) : (
-                            <View style={[local.thumb, garment.wash === 'machine' ? local.thumbAqua : local.thumbViolet]}>
+                            <View style={styles.iconBadge}>
                               <Ionicons
                                 name={garment.category === '바지' ? 'pricetag-outline' : 'shirt-outline'}
-                                size={22}
-                                color={garment.wash === 'machine' ? palette.blue : palette.accent}
+                                size={20}
+                                color={(garment.wash === 'unknown' || garment.wash === 'none') ? palette.error : palette.accent}
                               />
                             </View>
                           )}
                           <View style={local.details}>
-                            <Text style={local.garmentName}>{garment.name}</Text>
-                            {tags ? <Text style={local.metadata}>{tags}</Text> : null}
-                            <Text style={[local.care, (garment.wash === 'unknown' || garment.wash === 'none') && local.warning]}>
-                              {wash}{inBasket ? ' · 드럼에 담김' : ''}
-                            </Text>
+                            <Text style={styles.rowTitle}>{garment.name}</Text>
+                            {tags ? <Text style={styles.rowMeta}>{tags}</Text> : null}
+                            <View style={local.careLine}>
+                              <Ionicons
+                                name={garment.wash === 'unknown' ? 'help-circle-outline' : garment.wash === 'none' ? 'alert-circle-outline' : 'water-outline'}
+                                size={14}
+                                color={(garment.wash === 'unknown' || garment.wash === 'none') ? palette.error : palette.accent}
+                                accessible={false}
+                              />
+                              <Text style={[styles.rowMeta, local.care, (garment.wash === 'unknown' || garment.wash === 'none') && local.warning]}>
+                                {wash}{inBasket ? ' · 드럼에 담김' : ''}
+                              </Text>
+                            </View>
                           </View>
                         </Pressable>
                         <Pressable
@@ -224,11 +223,11 @@ export default function WardrobeScreen() {
         )}
       </Screen>
       {selected.length > 0 && (
-        <View style={[local.dock, { marginBottom: 98 + insets.bottom }]}>
+        <View style={[styles.actionDock, { marginBottom: 98 + insets.bottom }]}>
           {capacityNotice ? <Notice tone="error">{capacityNotice}</Notice> : null}
-          <View style={local.dockRow}>
+          <View style={styles.actionDockRow}>
             <View>
-              <Text style={local.dockLabel}>{remaining > 0 ? `드럼 ${basketIds.length}/${basketLimit}벌` : '드럼이 가득 찼어요'}</Text>
+              <Text style={local.dockLabel}>{remaining > 0 ? `드럼 ${basketIds.length}벌 · 분석 한도 ${basketLimit}벌` : `분석 한도 ${basketLimit}벌에 도달했어요`}</Text>
               <Pressable
                 accessibilityRole="button"
                 onPress={() => {
@@ -252,66 +251,39 @@ export default function WardrobeScreen() {
 
 const local = StyleSheet.create({
   screen: { flex: 1 },
-  hero: {
-    backgroundColor: palette.surface,
-    borderBottomWidth: 1,
-    borderBottomColor: palette.line,
-  },
-  heroInner: {
-    position: 'relative', width: '100%', maxWidth: 640, minHeight: 74, alignSelf: 'center',
-    flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: 8, paddingHorizontal: 68,
-    paddingVertical: 10,
-  },
-  heroHeading: { flex: 1, alignItems: 'center', gap: 2 },
-  heroTitle: { color: palette.ink, fontSize: 21, lineHeight: 28, fontWeight: '800', letterSpacing: -0.45 },
-  heroCount: { color: palette.muted, fontSize: 12, fontWeight: '600' },
-  heroAction: {
-    position: 'absolute', right: 18, top: 15,
+  headerAction: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4, minHeight: 44,
     paddingHorizontal: 10, borderRadius: 13, backgroundColor: palette.accentWash,
   },
-  heroActionText: { color: palette.accent, fontSize: 14, fontWeight: '700' },
-  search: {
-    flexDirection: 'row', alignItems: 'center', gap: 8, minHeight: 48,
-    paddingLeft: 13, borderWidth: 1, borderColor: palette.line, borderRadius: 15, backgroundColor: palette.surface,
-  },
-  input: { flex: 1, minWidth: 0, color: palette.ink, fontSize: 15, paddingRight: 4 },
+  headerActionText: { color: palette.accent, fontSize: 14, fontWeight: '700' },
   iconButton: { width: 44, minHeight: 44, alignItems: 'center', justifyContent: 'center' },
   inventory: { gap: 9 },
   listHeader: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8,
     minHeight: 38,
   },
-  listTitle: { flexShrink: 1, color: palette.ink, fontSize: 18, fontWeight: '800' },
+  listHeading: { flexShrink: 1, gap: 2 },
+  listTitle: { color: palette.ink, fontSize: 18, lineHeight: 24, fontWeight: '800' },
   textButton: { flexDirection: 'row', alignItems: 'center', alignSelf: 'flex-start', gap: 5, minHeight: 44 },
   linkText: { color: palette.accent, fontSize: 13, fontWeight: '700' },
-  empty: { alignItems: 'flex-start', gap: 8, padding: 17, backgroundColor: palette.surface, borderRadius: 16, borderWidth: 1, borderColor: palette.line },
-  list: { backgroundColor: palette.surface, borderWidth: 1, borderColor: palette.line, borderRadius: 17, overflow: 'hidden' },
+  empty: { alignItems: 'flex-start' },
+  list: { overflow: 'hidden' },
   itemDivider: { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: palette.line },
   selectedItem: { backgroundColor: palette.accentWash },
   itemRow: { flexDirection: 'row', alignItems: 'center' },
-  itemTarget: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 8, minHeight: 80, paddingVertical: 10, paddingLeft: 10 },
+  itemTarget: { flex: 1, minWidth: 0, flexDirection: 'row', alignItems: 'center', gap: 8, minHeight: 80, paddingVertical: 10, paddingLeft: 10 },
   checkbox: {
     width: 20, height: 20, alignItems: 'center', justifyContent: 'center',
     borderWidth: 1, borderColor: palette.muted, borderRadius: 6, backgroundColor: palette.surface,
   },
   checked: { borderColor: palette.accent, backgroundColor: palette.accent },
   inBasket: { borderColor: palette.line, backgroundColor: palette.subtle },
-  thumb: { width: 42, height: 42, borderRadius: 12, backgroundColor: palette.subtle, alignItems: 'center', justifyContent: 'center' },
-  thumbAqua: { backgroundColor: palette.aqua },
-  thumbViolet: { backgroundColor: palette.accentWash },
-  details: { flex: 1, gap: 3 },
-  garmentName: { color: palette.ink, fontSize: 15, fontWeight: '800' },
-  metadata: { color: palette.muted, fontSize: 12, lineHeight: 16 },
-  care: { color: palette.ink, fontSize: 12, lineHeight: 16, fontWeight: '600' },
+  thumbImage: { width: 38, height: 38, borderRadius: 12, backgroundColor: palette.subtle },
+  details: { flex: 1, minWidth: 0, gap: 3 },
+  care: { flexShrink: 1 },
+  careLine: { flexDirection: 'row', alignItems: 'center', gap: 4 },
   warning: { color: palette.error },
   confirm: { alignItems: 'flex-start', gap: 7, paddingHorizontal: 10, paddingVertical: 8, backgroundColor: palette.errorWash },
   confirmText: { color: palette.error, fontSize: 14, fontWeight: '600' },
-  dock: {
-    width: '100%', maxWidth: 640, alignSelf: 'center', gap: 7, paddingHorizontal: 18, paddingVertical: 10,
-    backgroundColor: palette.surface, borderWidth: 1, borderColor: palette.line, borderRadius: 18,
-    shadowColor: palette.ink, shadowOpacity: 0.08, shadowRadius: 12, shadowOffset: { width: 0, height: 4 }, elevation: 4,
-  },
-  dockRow: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', alignItems: 'center', gap: 8 },
   dockLabel: { color: palette.ink, fontSize: 13, fontWeight: '700' },
 });

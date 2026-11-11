@@ -2,30 +2,30 @@ import type { ComponentProps, ReactNode, Ref } from 'react';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import {
   Pressable, ScrollView, StyleSheet, Text, TextInput, View,
-  type ScrollViewInstance, type TextInputInstance, type TextInputProps,
+  type ScrollViewInstance, type StyleProp, type TextInputInstance, type TextInputProps, type ViewStyle,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 export const palette = {
-  paper: '#F8F6F7',
+  paper: '#FFF7ED',
   surface: '#FFFFFF',
-  ink: '#171923',
-  muted: '#5F6270',
-  accent: '#5A4BA3',
+  ink: '#282322',
+  muted: '#655B55',
+  accent: '#AE3E32',
   inverse: '#FFFFFF',
-  line: '#E7E7EF',
-  accentWash: '#E8E4F8',
-  subtle: '#F3F2F6',
+  line: '#EDE0D4',
+  accentWash: '#FBE3DB',
+  subtle: '#F8EFE6',
   error: '#9F263C',
   errorWash: '#FDECEF',
-  violet: '#BCBEF1',
-  lilac: '#D6D8FF',
-  aqua: '#BFEBEA',
-  blue: '#DDE7F5',
-  navy: '#242539',
-  blush: '#E9BFC0',
-  peach: '#FBE0CD',
-  coral: '#FF9DA0',
+  violet: '#B3A6F4',
+  lilac: '#DDD4FF',
+  aqua: '#A4E2CD',
+  blue: '#AED5F8',
+  navy: '#292322',
+  blush: '#FFD8CF',
+  peach: '#FFCF9A',
+  coral: '#FF8F7D',
 };
 
 export type IconName = ComponentProps<typeof Ionicons>['name'];
@@ -36,15 +36,16 @@ type ScreenProps = {
   subtitle?: string;
   scrollRef?: Ref<ScrollViewInstance>;
   reserveTabBar?: boolean;
+  contentStyle?: StyleProp<ViewStyle>;
 };
 
-export function Screen({ children, title, subtitle, scrollRef, reserveTabBar = true }: ScreenProps) {
+export function Screen({ children, title, subtitle, scrollRef, reserveTabBar = true, contentStyle }: ScreenProps) {
   const insets = useSafeAreaInsets();
   return (
     <ScrollView
       ref={scrollRef}
       style={styles.screen}
-      contentContainerStyle={[styles.content, reserveTabBar && { paddingBottom: 118 + insets.bottom }]}
+      contentContainerStyle={[styles.content, reserveTabBar && { paddingBottom: 118 + insets.bottom }, contentStyle]}
       keyboardShouldPersistTaps="handled"
       showsVerticalScrollIndicator={false}
     >
@@ -56,6 +57,66 @@ export function Screen({ children, title, subtitle, scrollRef, reserveTabBar = t
       )}
       {children}
     </ScrollView>
+  );
+}
+
+type ScreenHeaderProps = {
+  title?: string;
+  onBack?: () => void;
+  action?: ReactNode;
+};
+
+export function ScreenHeader({ title, onBack, action }: ScreenHeaderProps) {
+  return (
+    <View style={styles.screenHeader}>
+      {onBack && (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="뒤로"
+          onPress={onBack}
+          style={({ pressed }) => [styles.headerBack, pressed && styles.dimmed]}
+        >
+          <Ionicons name="chevron-back" size={22} color={palette.ink} />
+        </Pressable>
+      )}
+      {title ? <Text accessibilityRole="header" style={[styles.screenTitle, styles.headerTitle]}>{title}</Text> : null}
+      {action ? <View style={styles.headerAction}>{action}</View> : null}
+    </View>
+  );
+}
+
+type SearchFieldProps = Pick<TextInputProps, 'autoCapitalize' | 'autoCorrect'> & {
+  label: string;
+  value: string;
+  onChangeText: (value: string) => void;
+  placeholder: string;
+};
+
+export function SearchField({ label, value, onChangeText, placeholder, autoCapitalize, autoCorrect }: SearchFieldProps) {
+  return (
+    <View style={styles.searchField}>
+      <Ionicons name="search-outline" size={19} color={palette.accent} accessible={false} />
+      <TextInput
+        accessibilityLabel={label}
+        placeholder={placeholder}
+        placeholderTextColor={palette.muted}
+        value={value}
+        onChangeText={onChangeText}
+        autoCapitalize={autoCapitalize}
+        autoCorrect={autoCorrect}
+        style={styles.searchInput}
+      />
+      {value.length > 0 && (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="검색어 지우기"
+          onPress={() => onChangeText('')}
+          style={({ pressed }) => [styles.searchClear, pressed && styles.dimmed]}
+        >
+          <Ionicons name="close" size={19} color={palette.muted} />
+        </Pressable>
+      )}
+    </View>
   );
 }
 
@@ -134,80 +195,31 @@ export function Notice({ children, tone = 'info' }: { children: ReactNode; tone?
   );
 }
 
-type RingProps = {
-  value: number;
-  max: number;
-  size?: number;
-  thickness?: number;
-  track?: string;
-  color?: string;
-  children?: ReactNode;
-};
-
-export function ProgressRing({
-  value, max, size = 144, thickness = 10, track = palette.accentWash, color = palette.violet, children,
-}: RingProps) {
-  const ratio = max > 0 ? Math.max(0, Math.min(value / max, 1)) : 0;
-  const angle = 360 * ratio;
-  const half = size / 2;
-  const radius = (size - thickness) / 2;
-  const radians = angle * Math.PI / 180;
-  const circle = { width: size, height: size, borderRadius: half, borderWidth: thickness };
-  const halfMask = { width: half, height: size };
-
-  return (
-    <View style={[ring.center, { width: size, height: size }]}>
-      <View pointerEvents="none" style={[ring.topLeft, circle, { borderColor: track }]} />
-      {angle > 0 && (
-        <>
-          {/* Each window reveals the part of the rotating half-circle inside its half of the ring. */}
-          <View pointerEvents="none" style={[ring.top, ring.clip, halfMask, { left: half }]}>
-            <View style={[ring.top, { left: -half, width: size, height: size, transform: [{ rotate: Math.min(angle, 180) + 'deg' }] }]}>
-              <View style={[ring.topLeft, ring.clip, halfMask]}>
-                <View style={[ring.topLeft, circle, { borderColor: color }]} />
-              </View>
-            </View>
-          </View>
-          {angle > 180 && (
-            <View pointerEvents="none" style={[ring.topLeft, ring.clip, halfMask]}>
-              <View style={[ring.topLeft, { width: size, height: size, transform: [{ rotate: (angle - 180) + 'deg' }] }]}>
-                <View style={[ring.top, ring.clip, halfMask, { left: half }]}>
-                  <View style={[ring.top, circle, { left: -half, borderColor: color }]} />
-                </View>
-              </View>
-            </View>
-          )}
-          {ratio < 1 && (
-            <>
-              <View pointerEvents="none" style={[ring.top, { left: radius, width: thickness, height: thickness, borderRadius: thickness / 2, backgroundColor: color }]} />
-              <View pointerEvents="none" style={{ position: 'absolute', width: thickness, height: thickness, borderRadius: thickness / 2, backgroundColor: color, left: radius + radius * Math.sin(radians), top: radius - radius * Math.cos(radians) }} />
-            </>
-          )}
-        </>
-      )}
-      {children}
-    </View>
-  );
-}
-
-const ring = StyleSheet.create({
-  center: { alignItems: 'center', justifyContent: 'center' },
-  top: { position: 'absolute', top: 0 },
-  topLeft: { position: 'absolute', top: 0, left: 0 },
-  clip: { overflow: 'hidden' },
-});
-
 export const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: palette.paper },
   content: { paddingHorizontal: 20, paddingTop: 16, paddingBottom: 26, gap: 17, width: '100%', maxWidth: 640, alignSelf: 'center' },
   heading: { gap: 5, paddingBottom: 2 },
-  screenTitle: { color: palette.ink, fontSize: 29, lineHeight: 38, fontWeight: '800', letterSpacing: -0.9 },
+  screenHeader: { minHeight: 56, width: '100%', maxWidth: 640, alignSelf: 'center', flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, gap: 0 },
+  headerBack: { width: 44, height: 44, alignItems: 'flex-start', justifyContent: 'center', paddingLeft: 1 },
+  headerTitle: { flex: 1, minWidth: 0 },
+  headerAction: { minHeight: 44, alignItems: 'center', justifyContent: 'center', marginLeft: 8 },
+  screenTitle: { color: palette.ink, fontSize: 28, lineHeight: 36, fontWeight: '800', letterSpacing: -0.7 },
   title: { color: palette.ink, fontSize: 18, lineHeight: 25, fontWeight: '700', letterSpacing: -0.3 },
   body: { color: palette.ink, fontSize: 15, lineHeight: 22 },
   muted: { color: palette.muted, fontSize: 14, lineHeight: 21 },
   mono: { fontVariant: ['tabular-nums'] },
   section: { gap: 12 },
   wrap: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 8 },
+  card: { backgroundColor: palette.surface, borderWidth: 1, borderColor: palette.line, borderRadius: 18 },
+  cardContent: { padding: 14, gap: 12 },
+  iconBadge: { width: 38, height: 38, alignItems: 'center', justifyContent: 'center', borderRadius: 12, backgroundColor: palette.accentWash },
+  rowTitle: { color: palette.ink, fontSize: 15, lineHeight: 20, fontWeight: '700' },
+  rowMeta: { color: palette.muted, fontSize: 12, lineHeight: 16 },
+  actionDock: { width: '100%', maxWidth: 640, alignSelf: 'center', gap: 8, paddingHorizontal: 16, paddingVertical: 10, backgroundColor: palette.surface, borderWidth: 1, borderColor: palette.line, borderRadius: 18 },
+  actionDockRow: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', alignItems: 'center', gap: 8 },
+  searchField: { flexDirection: 'row', alignItems: 'center', gap: 8, minHeight: 48, paddingLeft: 13, paddingRight: 2, borderWidth: 1, borderColor: palette.line, borderRadius: 15, backgroundColor: palette.surface },
+  searchInput: { flex: 1, minWidth: 0, color: palette.ink, fontSize: 15, paddingVertical: 10, paddingRight: 4 },
+  searchClear: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
   button: { minHeight: 48, flexDirection: 'row', gap: 8, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 14, paddingVertical: 9, borderRadius: 13, borderWidth: 1, borderColor: palette.line, backgroundColor: palette.accentWash },
   primary: { backgroundColor: palette.accent, borderColor: palette.accent },
   quiet: { backgroundColor: 'transparent' },

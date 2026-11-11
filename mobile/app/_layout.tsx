@@ -7,7 +7,7 @@ import { StatusBar } from 'expo-status-bar';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaProvider, SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LaundryProvider } from '../src/store';
-import { palette, styles, type IconName } from '../src/ui';
+import { palette, ScreenHeader, styles, type IconName } from '../src/ui';
 
 const tabs: { href: Href; name: string; icon: IconName; selected: IconName }[] = [
   { href: '/', name: '홈', icon: 'home-outline', selected: 'home' },
@@ -31,7 +31,11 @@ function AppShell() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const isEditor = pathname === '/garment';
-  const showBack = pathname !== '/' && pathname !== '/wardrobe';
+  const routeTitle = pathname === '/'
+    ? '오늘의 세탁'
+    : pathname === '/machines'
+      ? '우리 집 세탁기'
+        : undefined;
 
   return (
     <SafeAreaView
@@ -40,18 +44,11 @@ function AppShell() {
     >
       <StatusBar style="dark" />
 
-      {showBack && (
-        <View style={layout.detailBar}>
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="뒤로"
-            style={({ pressed }) => [layout.back, pressed && styles.dimmed]}
-            onPress={() => router.canGoBack() ? router.back() : router.replace('/')}
-          >
-            <Ionicons name="chevron-back" size={22} color={palette.ink} />
-          </Pressable>
-          <Text style={layout.mode}>샘플 모드</Text>
-        </View>
+      {(routeTitle || pathname === '/drum') && (
+        <ScreenHeader
+          title={routeTitle}
+          onBack={pathname === '/' ? undefined : () => router.canGoBack() ? router.back() : router.replace('/')}
+        />
       )}
 
       <View style={layout.page}>
@@ -64,18 +61,7 @@ function AppShell() {
             <View style={layout.dockSurface}>
               <BlurView intensity={18} tint="light" pointerEvents="none" style={layout.dockBlur} />
               <View style={layout.tabs}>
-                {tabs.slice(0, 2).map((tab) => renderTab(tab))}
-                <View style={layout.addSlot}>
-                  <Pressable
-                    accessibilityRole="button"
-                    accessibilityLabel="의류 등록"
-                    onPress={() => router.push('/garment')}
-                    style={({ pressed }) => [layout.cell, pressed && styles.dimmed]}
-                  >
-                    <Ionicons name="add" size={25} color={palette.ink} />
-                  </Pressable>
-                </View>
-                {tabs.slice(2).map((tab) => renderTab(tab))}
+                {tabs.map((tab) => renderTab(tab))}
               </View>
             </View>
           </View>
@@ -95,7 +81,8 @@ function AppShell() {
         onPress={() => { if (!active) router.replace(tab.href); }}
         style={({ pressed }) => [layout.tab, active && layout.activeTab, pressed && styles.dimmed]}
       >
-        <Ionicons name={active ? tab.selected : tab.icon} size={22} color={palette.ink} />
+        <Ionicons name={active ? tab.selected : tab.icon} size={21} color={active ? palette.accent : palette.muted} />
+        <Text style={[layout.tabLabel, active && layout.activeTabLabel]}>{tab.name}</Text>
       </Pressable>
     );
   }
@@ -103,24 +90,21 @@ function AppShell() {
 
 const layout = StyleSheet.create({
   shell: { flex: 1, backgroundColor: palette.paper },
-  detailBar: { minHeight: 47, width: '100%', maxWidth: 640, alignSelf: 'center', paddingHorizontal: 17, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  back: { minWidth: 44, height: 44, alignItems: 'flex-start', justifyContent: 'center', paddingLeft: 5 },
-  mode: { color: palette.accent, backgroundColor: palette.accentWash, fontSize: 11, fontWeight: '700', paddingHorizontal: 10, paddingVertical: 5, borderRadius: 10 },
   page: { flex: 1, backgroundColor: palette.paper },
   route: { flex: 1, backgroundColor: palette.paper },
-  tabBar: { position: 'absolute', left: 0, right: 0, bottom: 0, paddingTop: 8, paddingHorizontal: 14, zIndex: 2 },
+  tabBar: { position: 'absolute', left: 0, right: 0, bottom: 0, paddingTop: 6, paddingHorizontal: 14, zIndex: 2 },
   dockShadow: {
-    width: '100%', maxWidth: 330, height: 70, alignSelf: 'center', borderRadius: 25,
+    width: '100%', maxWidth: 360, height: 66, alignSelf: 'center', borderRadius: 22,
     shadowColor: palette.navy, shadowOpacity: 0.10, shadowRadius: 18, shadowOffset: { width: 0, height: 6 }, elevation: 7,
   },
   dockSurface: {
-    flex: 1, overflow: 'hidden', borderRadius: 25,
+    flex: 1, overflow: 'hidden', borderRadius: 22,
     backgroundColor: 'rgba(255,255,255,0.94)',
   },
-  dockBlur: { ...StyleSheet.absoluteFill, borderRadius: 25 },
-  tabs: { flex: 1, width: '100%', alignSelf: 'center', flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 7, paddingHorizontal: 10 },
-  tab: { width: 48, height: 48, borderRadius: 15, justifyContent: 'center', alignItems: 'center', backgroundColor: palette.subtle },
-  activeTab: { backgroundColor: palette.lilac },
-  addSlot: { width: 48, alignItems: 'center', justifyContent: 'center' },
-  cell: { width: 48, height: 48, borderRadius: 15, alignItems: 'center', justifyContent: 'center', backgroundColor: palette.subtle },
+  dockBlur: { ...StyleSheet.absoluteFill, borderRadius: 22 },
+  tabs: { flex: 1, width: '100%', alignSelf: 'center', flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 4, paddingHorizontal: 8 },
+  tab: { flex: 1, minWidth: 0, height: 52, borderRadius: 15, justifyContent: 'center', alignItems: 'center', gap: 1 },
+  activeTab: { backgroundColor: palette.accentWash },
+  tabLabel: { color: palette.muted, fontSize: 10, lineHeight: 13, fontWeight: '700' },
+  activeTabLabel: { color: palette.accent, fontWeight: '800' },
 });

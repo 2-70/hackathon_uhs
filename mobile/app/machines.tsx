@@ -1,13 +1,13 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { useRouter } from 'expo-router';
 import { useEffect, useState } from 'react';
-import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { searchMachines } from '../src/mock';
 import type { Machine } from '../src/model';
 import { useLaundry } from '../src/store';
-import { Button, Notice, Screen, palette, styles } from '../src/ui';
+import { Button, Notice, Screen, SearchField, palette, styles } from '../src/ui';
 
 type SearchResult =
   | { query: string; status: 'loading' | 'error' }
@@ -57,52 +57,34 @@ export default function MachinesScreen() {
   return (
     <View style={local.screen}>
       <Screen>
-        <View style={local.pageHeader}>
-          <Text accessibilityRole="header" style={local.pageTitle}>우리 집 세탁기</Text>
-        </View>
         {loadError && <Notice tone="error">{loadError}</Notice>}
-        <View style={local.active}>
-          <View style={local.activeIcon}>
-            <Ionicons name="disc-outline" size={23} color={palette.accent} />
+        <View style={[styles.card, styles.cardContent, local.active]}>
+          <View style={styles.iconBadge}>
+            <Ionicons name="water-outline" size={23} color={palette.accent} />
           </View>
           <View style={local.activeDetail}>
-            <Text style={local.label}>등록 모델</Text>
-            <Text style={local.activeValue}>{!ready ? '불러오는 중…' : machine?.model ?? '미등록'}</Text>
-            {machine && <Text style={local.metadata}>{machine.maker}</Text>}
+            <Text style={styles.rowMeta}>내 세탁기</Text>
+            <Text style={styles.rowTitle}>{!ready ? '불러오는 중…' : machine?.model ?? '미등록'}</Text>
+            {machine && <Text style={styles.rowMeta}>{machine.maker}</Text>}
           </View>
           {machine && (
-            <View style={local.stat}>
-              <Text style={local.statValue}>{machine.courses.length}</Text>
-              <Text style={local.statLabel}>지원 코스</Text>
+            <View style={local.registeredBadge}>
+              <Ionicons name="checkmark-circle" size={15} color={palette.accent} />
+              <Text style={local.registeredText}>등록됨</Text>
             </View>
           )}
         </View>
 
-        <View style={local.section}>
+        <View style={[styles.card, styles.cardContent, local.section]}>
           <Text accessibilityRole="header" style={styles.title}>모델 검색</Text>
-          <View style={local.search}>
-            <Ionicons name="search-outline" size={19} color={palette.accent} />
-            <TextInput
-              accessibilityLabel="제조사 또는 모델명"
-              value={query}
-              onChangeText={setQuery}
-              placeholder="제조사 또는 모델명"
-              placeholderTextColor={palette.muted}
-              autoCapitalize="none"
-              autoCorrect={false}
-              style={local.input}
-            />
-            {query.length > 0 && (
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel="검색어 지우기"
-                onPress={() => setQuery('')}
-                style={local.iconButton}
-              >
-                <Ionicons name="close" size={19} color={palette.muted} />
-              </Pressable>
-            )}
-          </View>
+          <SearchField
+            label="제조사 또는 모델명"
+            value={query}
+            onChangeText={setQuery}
+            placeholder="제조사 또는 모델명"
+            autoCapitalize="none"
+            autoCorrect={false}
+          />
 
           {result.query !== query || result.status === 'loading' ? (
             <Notice>모델을 찾는 중이에요.</Notice>
@@ -145,8 +127,8 @@ export default function MachinesScreen() {
                       {checked && <View style={local.radioDot} />}
                     </View>
                     <View style={local.modelDetail}>
-                      <Text style={local.model}>{candidate.model}</Text>
-                      <Text style={local.metadata}>{candidate.maker} · 코스 {candidate.courses.length}개</Text>
+                      <Text style={styles.rowTitle}>{candidate.model}</Text>
+                      <Text style={styles.rowMeta}>{candidate.maker} · 코스 {candidate.courses.length}개</Text>
                     </View>
                     {candidate.id === machine?.id && (
                       <View style={local.inUseBadge}>
@@ -161,7 +143,7 @@ export default function MachinesScreen() {
         </View>
 
         {preview && (
-          <View style={local.section}>
+          <View style={[styles.card, styles.cardContent, local.section]}>
             <View style={local.tableTitle}>
               <Text accessibilityRole="header" style={styles.title}>지원 코스</Text>
               <Text style={local.label}>{preview.model}</Text>
@@ -196,12 +178,12 @@ export default function MachinesScreen() {
       </Screen>
 
       {preview && (
-        <View style={[local.dock, { marginBottom: 98 + insets.bottom }]}>
+        <View style={[styles.actionDock, { marginBottom: 98 + insets.bottom }]}>
           {saveError && <Notice tone="error">세탁기를 저장하지 못했어요. 다시 시도해 주세요.</Notice>}
-          <View style={local.dockRow}>
+          <View style={styles.actionDockRow}>
             <View style={local.dockModel}>
               <Text style={local.label}>{isRegistered ? '등록 모델' : '선택한 모델'}</Text>
-              <Text style={local.model}>{preview.model}</Text>
+              <Text style={styles.rowTitle}>{preview.model}</Text>
             </View>
             {isRegistered ? (
               <Button icon="arrow-forward" onPress={() => router.replace('/drum')}>드럼으로 이동</Button>
@@ -223,32 +205,17 @@ export default function MachinesScreen() {
 
 const local = StyleSheet.create({
   screen: { flex: 1 },
-  pageHeader: { alignItems: 'center', paddingVertical: 1 },
-  pageTitle: { color: palette.ink, fontSize: 21, lineHeight: 28, fontWeight: '800', letterSpacing: -0.45, textAlign: 'center' },
   active: {
-    flexDirection: 'row', alignItems: 'center', gap: 10, padding: 13,
-    borderWidth: 1, borderColor: palette.line, borderRadius: 17, backgroundColor: palette.surface,
+    flexDirection: 'row', alignItems: 'center',
   },
-  activeIcon: {
-    width: 42, height: 42, borderRadius: 13, backgroundColor: palette.accentWash,
-    alignItems: 'center', justifyContent: 'center',
-  },
-  activeDetail: { flex: 1, gap: 3 },
-  activeValue: { color: palette.ink, fontSize: 18, fontWeight: '800', fontVariant: ['tabular-nums'] },
+  activeDetail: { flex: 1, minWidth: 0, gap: 2 },
   label: { color: palette.muted, fontSize: 12, fontWeight: '700' },
-  stat: {
-    alignItems: 'center', gap: 2, paddingVertical: 7, paddingHorizontal: 9,
-    backgroundColor: palette.aqua, borderRadius: 13,
+  registeredBadge: {
+    flexDirection: 'row', alignItems: 'center', gap: 4, paddingVertical: 7, paddingHorizontal: 9,
+    backgroundColor: palette.accentWash, borderRadius: 13,
   },
-  statValue: { color: palette.accent, fontSize: 17, fontWeight: '800', fontVariant: ['tabular-nums'] },
-  statLabel: { color: palette.muted, fontSize: 11, fontWeight: '700' },
-  section: { gap: 11, padding: 14, borderRadius: 17, borderWidth: 1, borderColor: palette.line, backgroundColor: palette.surface },
-  search: {
-    flexDirection: 'row', alignItems: 'center', gap: 8, minHeight: 48,
-    paddingLeft: 12, borderWidth: 1, borderColor: palette.line, borderRadius: 13, backgroundColor: palette.paper,
-  },
-  input: { flex: 1, minWidth: 0, color: palette.ink, fontSize: 15, paddingRight: 4 },
-  iconButton: { width: 44, minHeight: 44, alignItems: 'center', justifyContent: 'center' },
+  registeredText: { color: palette.accent, fontSize: 12, fontWeight: '700' },
+  section: { gap: 12 },
   feedback: { alignItems: 'flex-start', gap: 8, paddingVertical: 8 },
   listHeader: { paddingVertical: 7, paddingHorizontal: 3 },
   result: {
@@ -263,10 +230,8 @@ const local = StyleSheet.create({
   },
   radioChecked: { borderColor: palette.accent },
   radioDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: palette.accent },
-  modelDetail: { flex: 1, gap: 3 },
-  model: { color: palette.ink, fontSize: 15, fontWeight: '700', fontVariant: ['tabular-nums'] },
-  metadata: { color: palette.muted, fontSize: 12, lineHeight: 16 },
-  inUseBadge: { paddingHorizontal: 8, paddingVertical: 5, borderRadius: 9, backgroundColor: palette.aqua },
+  modelDetail: { flex: 1, minWidth: 0, gap: 3 },
+  inUseBadge: { paddingHorizontal: 8, paddingVertical: 5, borderRadius: 9, backgroundColor: palette.accentWash },
   inUse: { color: palette.accent, fontSize: 12, fontWeight: '700' },
   tableTitle: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'baseline', justifyContent: 'space-between', gap: 8 },
   table: { borderRadius: 12, borderWidth: 1, borderColor: palette.line, overflow: 'hidden' },
@@ -278,11 +243,5 @@ const local = StyleSheet.create({
   numberCell: { flex: 0.8, textAlign: 'right' },
   tableValue: { color: palette.ink, fontSize: 14, fontWeight: '600' },
   numeric: { fontVariant: ['tabular-nums'] },
-  dock: {
-    width: '100%', maxWidth: 640, alignSelf: 'center', gap: 7, paddingHorizontal: 18, paddingVertical: 10,
-    backgroundColor: palette.surface, borderWidth: 1, borderColor: palette.line, borderRadius: 18,
-    shadowColor: palette.ink, shadowOpacity: 0.08, shadowRadius: 12, shadowOffset: { width: 0, height: 4 }, elevation: 4,
-  },
-  dockRow: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', alignItems: 'center', gap: 8 },
   dockModel: { gap: 3 },
 });
