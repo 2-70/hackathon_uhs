@@ -1,34 +1,101 @@
-import type { ComponentProps, ReactNode, Ref } from 'react';
+import { forwardRef, useEffect, useRef, useState, type ComponentProps, type ComponentRef, type ReactNode, type Ref } from 'react';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import {
-  Pressable, ScrollView, StyleSheet, Text, TextInput, View,
-  type ScrollViewInstance, type StyleProp, type TextInputInstance, type TextInputProps, type ViewStyle,
+  AccessibilityInfo, Animated, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View,
+  type PressableProps, type PressableStateCallbackType, type ScrollViewInstance, type StyleProp,
+  type TextInputInstance, type TextInputProps, type ViewStyle,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 export const palette = {
-  paper: '#FFF7ED',
-  surface: '#FFFFFF',
-  ink: '#282322',
-  muted: '#655B55',
-  accent: '#AE3E32',
+  paper: '#F0EEFC',
+  surface: '#FFFEFF',
+  ink: '#211B38',
+  muted: '#625A76',
+  accent: '#5E48DC',
   inverse: '#FFFFFF',
-  line: '#EDE0D4',
-  accentWash: '#FBE3DB',
-  subtle: '#F8EFE6',
+  line: '#E2DCF6',
+  accentWash: '#E7E0FF',
+  subtle: '#F6F3FF',
   error: '#9F263C',
   errorWash: '#FDECEF',
-  violet: '#B3A6F4',
-  lilac: '#DDD4FF',
-  aqua: '#A4E2CD',
-  blue: '#AED5F8',
-  navy: '#292322',
-  blush: '#FFD8CF',
-  peach: '#FFCF9A',
-  coral: '#FF8F7D',
+  violet: '#A99AF7',
+  lilac: '#D9D0FF',
+  aqua: '#D8EFE1',
+  blue: '#DDE8FB',
+  navy: '#302554',
+  blush: '#FBE2EA',
+  peach: '#FCE9CD',
+  coral: '#C76C85',
 };
 
 export type IconName = ComponentProps<typeof Ionicons>['name'];
+
+const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
+
+export function useReducedMotion(): boolean | null {
+  const [reduceMotion, setReduceMotion] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    let mounted = true;
+    AccessibilityInfo.isReduceMotionEnabled().then((enabled) => {
+      if (mounted) setReduceMotion(enabled);
+    }).catch(() => {
+      if (mounted) setReduceMotion(false);
+    });
+    const subscription = AccessibilityInfo.addEventListener('reduceMotionChanged', setReduceMotion);
+    return () => {
+      mounted = false;
+      subscription.remove();
+    };
+  }, []);
+
+  return reduceMotion;
+}
+
+/** A Pressable-compatible touch target with a short, springy scale response. */
+export const SpringPressable = forwardRef<ComponentRef<typeof Pressable>, PressableProps>(function SpringPressable(
+  { onPressIn, onPressOut, style, ...props },
+  ref,
+) {
+  const scale = useRef(new Animated.Value(1)).current;
+  const [pressed, setPressed] = useState(false);
+  const reduceMotion = useReducedMotion();
+
+  const moveTo = (value: number) => {
+    if (reduceMotion !== false) {
+      scale.setValue(1);
+      return;
+    }
+    Animated.spring(scale, {
+      toValue: value,
+      useNativeDriver: Platform.OS !== 'web',
+      speed: 24,
+      bounciness: 7,
+    }).start();
+  };
+  const state: PressableStateCallbackType = { pressed };
+  const resolvedStyle = StyleSheet.flatten(typeof style === 'function' ? style(state) : style);
+  const userTransform = typeof resolvedStyle?.transform === 'string' ? [] : (resolvedStyle?.transform ?? []);
+
+  return (
+    <AnimatedPressable
+      {...props}
+      ref={ref}
+      onPressIn={(event) => {
+        setPressed(true);
+        moveTo(0.975);
+        onPressIn?.(event);
+      }}
+      onPressOut={(event) => {
+        setPressed(false);
+        moveTo(1);
+        onPressOut?.(event);
+      }}
+      style={[resolvedStyle, { transform: [...userTransform, { scale }] }]}
+    />
+  );
+});
 
 type ScreenProps = {
   children: ReactNode;
@@ -70,17 +137,58 @@ export function ScreenHeader({ title, onBack, action }: ScreenHeaderProps) {
   return (
     <View style={styles.screenHeader}>
       {onBack && (
-        <Pressable
+        <SpringPressable
           accessibilityRole="button"
           accessibilityLabel="뒤로"
           onPress={onBack}
           style={({ pressed }) => [styles.headerBack, pressed && styles.dimmed]}
         >
           <Ionicons name="chevron-back" size={22} color={palette.ink} />
-        </Pressable>
+        </SpringPressable>
       )}
       {title ? <Text accessibilityRole="header" style={[styles.screenTitle, styles.headerTitle]}>{title}</Text> : null}
       {action ? <View style={styles.headerAction}>{action}</View> : null}
+    </View>
+  );
+}
+
+type LaundryRouteHeaderProps = {
+  active: 'drum' | 'machines';
+  onBack: () => void;
+  onNavigate: (route: '/drum' | '/machines') => void;
+};
+
+export function LaundryRouteHeader({ active, onBack, onNavigate }: LaundryRouteHeaderProps) {
+  return (
+    <View style={[styles.screenHeader, styles.laundryHeader]}>
+      <SpringPressable
+        accessibilityRole="button"
+        accessibilityLabel="뒤로"
+        onPress={onBack}
+        style={styles.headerBack}
+      >
+        <Ionicons name="chevron-back" size={22} color={palette.ink} />
+      </SpringPressable>
+      <View style={styles.laundrySwitch}>
+        {([
+          ['drum', '드럼', '/drum'],
+          ['machines', '세탁기', '/machines'],
+        ] as const).map(([key, label, route]) => {
+          const selected = active === key;
+          return (
+            <SpringPressable
+              key={key}
+              accessibilityRole="tab"
+              accessibilityLabel={label}
+              accessibilityState={{ selected }}
+              onPress={() => { if (!selected) onNavigate(route); }}
+              style={[styles.laundrySegment, selected && styles.laundrySegmentSelected]}
+            >
+              <Text style={[styles.laundrySegmentLabel, selected && styles.laundrySegmentLabelSelected]}>{label}</Text>
+            </SpringPressable>
+          );
+        })}
+      </View>
     </View>
   );
 }
@@ -107,14 +215,14 @@ export function SearchField({ label, value, onChangeText, placeholder, autoCapit
         style={styles.searchInput}
       />
       {value.length > 0 && (
-        <Pressable
+        <SpringPressable
           accessibilityRole="button"
           accessibilityLabel="검색어 지우기"
           onPress={() => onChangeText('')}
           style={({ pressed }) => [styles.searchClear, pressed && styles.dimmed]}
         >
           <Ionicons name="close" size={19} color={palette.muted} />
-        </Pressable>
+        </SpringPressable>
       )}
     </View>
   );
@@ -131,7 +239,7 @@ type ButtonProps = {
 export function Button({ children, onPress, tone = 'primary', disabled, icon }: ButtonProps) {
   const color = tone === 'primary' ? palette.inverse : palette.accent;
   return (
-    <Pressable
+    <SpringPressable
       accessibilityRole="button"
       accessibilityState={{ disabled: !!disabled }}
       onPress={onPress}
@@ -145,7 +253,7 @@ export function Button({ children, onPress, tone = 'primary', disabled, icon }: 
     >
       {icon && <Ionicons name={icon} size={18} color={color} />}
       <Text style={[styles.buttonText, { color }]}>{children}</Text>
-    </Pressable>
+    </SpringPressable>
   );
 }
 
@@ -173,14 +281,14 @@ export function Field({ label, inputRef, invalid, ...props }: FieldProps) {
 
 export function Chip({ children, selected, onPress }: { children: ReactNode; selected: boolean; onPress: () => void }) {
   return (
-    <Pressable
+    <SpringPressable
       accessibilityRole="button"
       accessibilityState={{ selected }}
       onPress={onPress}
       style={({ pressed }) => [styles.chip, selected && styles.chipSelected, pressed && styles.dimmed]}
     >
       <Text style={[styles.chipLabel, selected && styles.chipLabelSelected]}>{children}</Text>
-    </Pressable>
+    </SpringPressable>
   );
 }
 
@@ -200,7 +308,13 @@ export const styles = StyleSheet.create({
   content: { paddingHorizontal: 20, paddingTop: 16, paddingBottom: 26, gap: 17, width: '100%', maxWidth: 640, alignSelf: 'center' },
   heading: { gap: 5, paddingBottom: 2 },
   screenHeader: { minHeight: 56, width: '100%', maxWidth: 640, alignSelf: 'center', flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, gap: 0 },
+  laundryHeader: { gap: 8 },
   headerBack: { width: 44, height: 44, alignItems: 'flex-start', justifyContent: 'center', paddingLeft: 1 },
+  laundrySwitch: { flex: 1, minWidth: 0, maxWidth: 240, flexDirection: 'row', padding: 3, gap: 3, borderRadius: 14, backgroundColor: palette.subtle },
+  laundrySegment: { flex: 1, minWidth: 0, minHeight: 36, paddingHorizontal: 8, borderRadius: 11, alignItems: 'center', justifyContent: 'center' },
+  laundrySegmentSelected: { backgroundColor: palette.surface, borderWidth: 1, borderColor: palette.line },
+  laundrySegmentLabel: { color: palette.muted, fontSize: 12, lineHeight: 16, fontWeight: '700' },
+  laundrySegmentLabelSelected: { color: palette.accent, fontWeight: '800' },
   headerTitle: { flex: 1, minWidth: 0 },
   headerAction: { minHeight: 44, alignItems: 'center', justifyContent: 'center', marginLeft: 8 },
   screenTitle: { color: palette.ink, fontSize: 28, lineHeight: 36, fontWeight: '800', letterSpacing: -0.7 },

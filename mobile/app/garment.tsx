@@ -272,7 +272,7 @@ function GarmentEditor({ existing }: { existing?: Garment }) {
         <View style={local.modeBar}>
           {entryModes.map(({ id, title, icon }) => {
             const selected = mode === id;
-            const iconBackground = id === 'clothing' ? palette.aqua : id === 'label' ? palette.peach : palette.blue;
+            const iconBackground = id === 'clothing' ? palette.aqua : id === 'label' ? palette.lilac : palette.blue;
             return (
               <Pressable
                 key={id}
@@ -555,6 +555,12 @@ function PhotoEntry({
       ) : (
         <>
           <View style={[local.captureStage, !uri && local.captureEmpty]}>
+            {!uri && (
+              <View pointerEvents="none" style={StyleSheet.absoluteFill}>
+                <View style={local.captureAccentTop} />
+                <View style={local.captureAccentBottom} />
+              </View>
+            )}
             {uri ? (
               <Image accessibilityLabel={title} source={{ uri }} style={local.preview} />
             ) : (
@@ -637,7 +643,7 @@ function AnalysisReport({ result, kind, busy, onApply, onNext }: {
   const { care } = result;
   const reportTone = result.status === 'exact' || result.status === 'label'
     ? palette.aqua
-    : result.status === 'candidate' ? palette.peach : palette.blush;
+    : result.status === 'candidate' ? palette.blue : palette.lilac;
   const rows = [
     { label: '소재', value: care.material },
     { label: '세탁', value: washOptions.find(({ value }) => value === care.wash)?.label },
@@ -706,6 +712,14 @@ const local = StyleSheet.create({
     alignItems: 'center', justifyContent: 'center', borderRadius: 18, overflow: 'hidden',
     borderWidth: 1, borderColor: palette.line, backgroundColor: palette.lilac,
   },
+  captureAccentTop: {
+    position: 'absolute', top: 18, right: 18, width: 118, height: 118, borderRadius: 59,
+    borderWidth: 1, borderColor: palette.surface, backgroundColor: palette.accentWash, opacity: 0.55,
+  },
+  captureAccentBottom: {
+    position: 'absolute', bottom: -30, left: 16, width: 88, height: 88, borderRadius: 44,
+    borderWidth: 7, borderColor: palette.surface, opacity: 0.55,
+  },
   captureEmpty: {
     flexGrow: 1, minHeight: 145, maxHeight: 455, justifyContent: 'space-between', gap: 8, padding: 14,
   },
@@ -761,7 +775,7 @@ const local = StyleSheet.create({
     alignItems: 'center', justifyContent: 'center',
   },
   checkboxChecked: { backgroundColor: palette.accent, borderColor: palette.accent },
-  saveArea: { gap: 8, padding: 10, borderRadius: 16, backgroundColor: palette.peach },
+  saveArea: { gap: 8, padding: 10, borderRadius: 16, backgroundColor: palette.accentWash },
 
   report: { gap: 11, borderWidth: 1, borderColor: palette.line, borderRadius: 18, padding: 13 },
   reportHeading: { alignItems: 'center', gap: 5 },

@@ -59,7 +59,7 @@ export default function Drum() {
   const error = outcome && 'error' in outcome ? outcome.error : null;
   const busy = !!input && !outcome;
   const openWardrobe = () => router.push('/wardrobe');
-  const openMachines = () => router.push('/machines');
+  const openMachines = () => router.replace('/machines');
 
   function renderAction() {
     if (loadError) return null;
@@ -176,10 +176,14 @@ function LoadReadout({ count }: { count: number }) {
       accessibilityLiveRegion="polite"
       style={drum.readout}
     >
-      <View style={drum.loadCircle}>
-        <Ionicons name="shirt-outline" size={20} color={palette.accent} />
-        <Text style={drum.count}>{count}<Text style={drum.countUnit}>벌</Text></Text>
-        <Text style={styles.rowMeta}>담은 옷</Text>
+      <View style={drum.loadCanvas}>
+        <View style={drum.loadOuterRing} />
+        <View style={drum.loadMiddleRing} />
+        <View style={drum.loadCircle}>
+          <Ionicons name="shirt-outline" size={20} color={palette.accent} />
+          <Text style={drum.count}>{count}<Text style={drum.countUnit}>벌</Text></Text>
+          <Text style={styles.rowMeta}>담은 옷</Text>
+        </View>
       </View>
     </View>
   );
@@ -322,8 +326,11 @@ function Validation({ group, machine }: { group: Plan['groups'][number]; machine
 
 const drum = StyleSheet.create({
   load: { gap: 13, padding: 15 },
-  readout: { padding: 12, borderRadius: 18, backgroundColor: palette.peach, alignItems: 'center' },
-  loadCircle: { width: 126, height: 126, alignSelf: 'center', borderRadius: 63, borderWidth: 9, borderColor: palette.surface, alignItems: 'center', justifyContent: 'center', backgroundColor: palette.peach },
+  readout: { padding: 9, borderRadius: 20, backgroundColor: palette.accentWash, alignItems: 'center' },
+  loadCanvas: { width: 158, height: 158, alignItems: 'center', justifyContent: 'center' },
+  loadOuterRing: { position: 'absolute', width: 154, height: 154, borderRadius: 77, backgroundColor: palette.lilac, borderWidth: 1, borderColor: palette.violet, opacity: 0.55 },
+  loadMiddleRing: { position: 'absolute', width: 136, height: 136, borderRadius: 68, backgroundColor: palette.violet, opacity: 0.42 },
+  loadCircle: { width: 122, height: 122, alignSelf: 'center', borderRadius: 61, borderWidth: 5, borderColor: palette.surface, alignItems: 'center', justifyContent: 'center', backgroundColor: palette.surface },
   count: { color: palette.ink, fontSize: 37, lineHeight: 42, fontWeight: '800', letterSpacing: -1.2, fontVariant: ['tabular-nums'] },
   countUnit: { color: palette.muted, fontSize: 16, letterSpacing: 0 },
   machineRow: { flexDirection: 'row', alignItems: 'center', gap: 9, minHeight: 58, paddingVertical: 6, paddingHorizontal: 10, backgroundColor: palette.paper },

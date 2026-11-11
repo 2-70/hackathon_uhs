@@ -115,7 +115,7 @@ export default function WardrobeScreen() {
 
             {visible.length === 0 && (
               <View style={[styles.card, styles.cardContent, local.empty]}>
-                <View style={styles.iconBadge} accessible={false}>
+                <View style={[styles.iconBadge, local.emptyIconBadge]} accessible={false}>
                   <Ionicons name={searchTerm ? 'search-outline' : 'shirt-outline'} size={21} color={palette.accent} />
                 </View>
                 <Text style={styles.title}>{searchTerm ? '찾는 옷이 없어요' : '옷장이 비어 있어요'}</Text>
@@ -155,7 +155,7 @@ export default function WardrobeScreen() {
                           {garment.photo ? (
                             <Image source={{ uri: garment.photo }} style={local.thumbImage} />
                           ) : (
-                            <View style={styles.iconBadge}>
+                            <View style={[styles.iconBadge, local.garmentIconBadge]}>
                               <Ionicons
                                 name={garment.category === '바지' ? 'pricetag-outline' : 'shirt-outline'}
                                 size={20}
@@ -267,6 +267,8 @@ const local = StyleSheet.create({
   textButton: { flexDirection: 'row', alignItems: 'center', alignSelf: 'flex-start', gap: 5, minHeight: 44 },
   linkText: { color: palette.accent, fontSize: 13, fontWeight: '700' },
   empty: { alignItems: 'flex-start' },
+  emptyIconBadge: { backgroundColor: palette.lilac },
+  garmentIconBadge: { backgroundColor: palette.aqua },
   list: { overflow: 'hidden' },
   itemDivider: { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: palette.line },
   selectedItem: { backgroundColor: palette.accentWash },

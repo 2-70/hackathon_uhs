@@ -212,7 +212,7 @@ const local = StyleSheet.create({
   label: { color: palette.muted, fontSize: 12, fontWeight: '700' },
   registeredBadge: {
     flexDirection: 'row', alignItems: 'center', gap: 4, paddingVertical: 7, paddingHorizontal: 9,
-    backgroundColor: palette.accentWash, borderRadius: 13,
+    backgroundColor: palette.aqua, borderRadius: 13,
   },
   registeredText: { color: palette.accent, fontSize: 12, fontWeight: '700' },
   section: { gap: 12 },
@@ -231,7 +231,7 @@ const local = StyleSheet.create({
   radioChecked: { borderColor: palette.accent },
   radioDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: palette.accent },
   modelDetail: { flex: 1, minWidth: 0, gap: 3 },
-  inUseBadge: { paddingHorizontal: 8, paddingVertical: 5, borderRadius: 9, backgroundColor: palette.accentWash },
+  inUseBadge: { paddingHorizontal: 8, paddingVertical: 5, borderRadius: 9, backgroundColor: palette.aqua },
   inUse: { color: palette.accent, fontSize: 12, fontWeight: '700' },
   tableTitle: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'baseline', justifyContent: 'space-between', gap: 8 },
   table: { borderRadius: 12, borderWidth: 1, borderColor: palette.line, overflow: 'hidden' },
