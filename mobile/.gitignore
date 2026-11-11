@@ -1,0 +1,15 @@
+.expo/
+node_modules/
+.pnpm-store/
+dist/
+android/
+ios/
+expo-env.d.ts
+*.tsbuildinfo
+.env
+.env.*
+!.env.example
+credentials.json
+*.jks
+*.keystore
+*.apk

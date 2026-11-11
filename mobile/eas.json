@@ -1,0 +1,14 @@
+{
+  "cli": {
+    "appVersionSource": "local"
+  },
+  "build": {
+    "preview": {
+      "distribution": "internal",
+      "pnpm": "11.25.0",
+      "android": {
+        "buildType": "apk"
+      }
+    }
+  }
+}

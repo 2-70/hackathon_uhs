@@ -1,8 +1,8 @@
-# WashWise Backend
+# WashWise
 
-WashWise의 첫 번째 백엔드 기반입니다. FastAPI, SQLAlchemy, Alembic을 사용하며 로컬에서는 SQLite로 빠르게 검증하고 운영에서는 Neon PostgreSQL을 사용하도록 구성했습니다.
+WashWise는 의류별 세탁 제한과 사용자의 실제 세탁기 지원 조합을 비교해 최소 세탁 그룹과 설정 적합성을 계산하는 FastAPI·Expo 프로젝트입니다.
 
-## 핵심 실행
+## 빠른 실행
 
 ```powershell
 uv sync --extra dev
@@ -11,34 +11,42 @@ uv run alembic upgrade head
 uv run uvicorn backend.app.main:app --reload
 ```
 
-실행 후 `http://127.0.0.1:8000/docs`에서 OpenAPI 문서를 확인할 수 있습니다.
+실행 후 다음 주소를 확인합니다.
+
+- 상태: `http://127.0.0.1:8000/health`
+- DB 상태: `http://127.0.0.1:8000/health/db`
+- OpenAPI: `http://127.0.0.1:8000/docs`
 
 ## 구현 범위
 
-- 구현: 상태 확인, 옷장 CRUD, 기기 모델·코스·지원 설정 조합 조회, 사용자 기기 등록·조회, 공식 데이터 저장 모델, 멱등성 시드 로더, 공통 오류 형식
-- 계약만 제공: AI 분석, 제품 검색, 세탁 계획, 설정 적합성 판정
-- 검증 완료: Neon PostgreSQL 연결, TLS, 마이그레이션, 실제 HTTP 저장·조회·수정·삭제와 시드 중복 방지
-- 미검증: 유상진 님의 공식 검증 시드, 이진영 님의 실제 모바일 빌드 연동
+- 옷장 CRUD, 상품 참조, 필드별 출처·확인 상태·충돌 보존
+- 공용 세탁기 모델·코스·실제 설정 조합 및 사용자 기기 복원
+- 최대 10벌의 분류와 부분집합 DP 최소 세탁 그룹
+- 실제 입력 설정의 `suitable`, `needs_change`, `unknown` 판정
+- 건조 안내, 용량 확인 상태, 최신 입력 fingerprint
+- Gemini 분석·공식 상품 DB 카탈로그 통합
+- 추가형 Alembic `0001 → 0002 → 0003`, Neon PostgreSQL
 
-자세한 요청·응답 형식은 [docs/api-contract.md](docs/api-contract.md)를 참고합니다.
+현재 모바일은 옷장·기기·AI를 실제 API로 사용하지만 계획·설정검증 화면은 아직 로컬 mock입니다. 필요한 변경은 [모바일 인계 문서](docs/mobile-p0-handoff.md)에 있습니다.
 
-## Neon 연결과 실행
-
-현재 연결 대상은 `fancy-bar-96022343` 프로젝트의 `production` 브랜치입니다.
-`neon deploy`가 `.env`에 `DATABASE_URL`과 `DATABASE_URL_UNPOOLED`를 기록합니다.
-FastAPI는 pooled URL, Alembic은 unpooled URL을 사용하며 표준 PostgreSQL URL을 psycopg 3 형식으로 자동 처리합니다.
-`.env.local`이 있으면 `.env`보다 우선하고, 프로세스 환경변수는 두 파일보다 우선합니다.
-실제 연결값이 있는 `.env`를 `.env.example`로 덮어쓰지 마세요.
+## 공식 시드
 
 ```powershell
-neon deploy
-npm run build
-uv run alembic upgrade head
-npm start
+uv run python -m backend.seed.load_verified --washwise-demo
 ```
 
-`npm run build`는 Python 문법, 앱 의존성 및 OpenAPI 생성을 검사합니다. 프런트엔드 번들을 만드는 명령은 아닙니다.
-Node 의존성은 Neon 설정용이며 실제 API는 계속 Python FastAPI로 실행합니다.
-기존 서버가 실행 중이면 종료 후 다시 시작해 새 DB 설정을 읽으세요.
-로컬 `washwise.db`의 기존 데이터는 보존되며 Neon으로 자동 복사되지 않습니다.
-검증 상세와 제한은 [Neon 연결 보고서](docs/neon-setup-report.md)에 기록했습니다.
+LG `WM4000HWA`의 `Warm`, `Cold`, `High` 같은 이름은 공식 원문 그대로 저장하며 근거 없는 섭씨·RPM으로 변환하지 않습니다.
+
+## 검증
+
+```powershell
+npm run build
+uv run ruff check .
+uv run pytest
+cd mobile
+pnpm typecheck
+pnpm test
+pnpm bundle:android
+```
+
+세부 계약은 [공용 API 계약](docs/api-contract.md), 실행 방법은 [runbook](docs/runbook.md), 완료·제한 사항은 [완료 보고서](docs/completion-report.md)를 참고합니다.

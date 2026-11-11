@@ -6,7 +6,7 @@ from types import ModuleType
 
 from fastapi import APIRouter, FastAPI
 
-from backend.app.api.routes import health, machines, user_machines, wardrobe
+from backend.app.api.routes import catalog, health, machines, planning, user_machines, wardrobe
 from backend.app.core.config import get_settings
 
 logger = logging.getLogger(__name__)
@@ -21,6 +21,10 @@ api_router.include_router(wardrobe.router)
 api_router.include_router(machines.router)
 # 사용자 기기 등록·복원 API를 등록합니다.
 api_router.include_router(user_machines.router)
+# 최소 세탁 계획과 실제 설정 검증 API를 등록합니다.
+api_router.include_router(planning.router)
+# 한국 내수 대량 카탈로그 검색·통계·공식 사용법 API를 등록합니다.
+api_router.include_router(catalog.router)
 
 
 def _load_ai_router_module() -> ModuleType | None:
@@ -56,4 +60,10 @@ def include_optional_ai_router(app: FastAPI) -> None:
         # 규약을 지키지 않은 모듈은 서버 시작 전에 명확히 알립니다.
         raise RuntimeError("backend.app.ai.router.router가 필요합니다.")
     # AI 경로도 공용 API의 `/api` 접두사를 사용하도록 연결합니다.
-    app.include_router(ai_router, prefix="/api")
+    # AI 라우터가 이미 /api를 가지면 접두사를 중복해서 붙이지 않습니다.
+    app.include_router(ai_router, prefix="" if ai_router.prefix == "/api" else "/api")
+    # 상품 매칭은 JSON fallback 대신 현재 DB의 확인된 상품만 사용합니다.
+    from backend.app.ai.catalog import get_catalog
+    from backend.app.api.catalog import get_db_catalog
+
+    app.dependency_overrides[get_catalog] = get_db_catalog

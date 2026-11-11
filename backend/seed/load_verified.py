@@ -26,6 +26,7 @@ class CareInstructionSeed(BaseModel):
     model_config = ConfigDict(extra="forbid")
     field_name: str = Field(min_length=1, max_length=100)
     value_text: str = Field(min_length=1, max_length=200)
+    evidence: str | None = Field(default=None, max_length=300)
     source_type: str = Field(min_length=1, max_length=50)
     source_url: str | None = Field(default=None, max_length=500)
     verification_status: str = Field(min_length=1, max_length=30)
@@ -39,6 +40,7 @@ class ProductSeed(BaseModel):
     brand: str = Field(min_length=1, max_length=120)
     product_name: str = Field(min_length=1, max_length=200)
     official_url: str | None = Field(default=None, max_length=500)
+    catalog_details: dict[str, Any] | None = None
     source_type: str = Field(min_length=1, max_length=50)
     verification_status: str = Field(min_length=1, max_length=30)
     care_instructions: list[CareInstructionSeed] = Field(default_factory=list)
@@ -59,12 +61,18 @@ class SettingSeed(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
     temperature_celsius: int | None = Field(default=None, ge=0, le=100)
+    temperature_setting: str | None = Field(default=None, max_length=40)
+    wash_strength: str | None = Field(default=None, max_length=30)
     spin_level: str | None = Field(default=None, max_length=40)
+    spin_rpm: int | None = Field(default=None, ge=0)
     water_level: str | None = Field(default=None, max_length=40)
     dry_level: str | None = Field(default=None, max_length=40)
     duration_minutes: int | None = Field(default=None, ge=0)
     source_url: str | None = Field(default=None, max_length=500)
     verification_status: str = Field(min_length=1, max_length=30)
+    is_default: bool = False
+    manual_page: int | None = Field(default=None, ge=1)
+    evidence: str | None = Field(default=None, max_length=500)
 
     @property
     def setting_key(self) -> str:
@@ -79,7 +87,18 @@ class SettingSeed(BaseModel):
             self.duration_minutes,
         )
         # None도 문자열로 명시해 비어 있는 값의 위치를 보존합니다.
-        return "|".join("null" if value is None else str(value) for value in values)
+        key = "|".join("null" if value is None else str(value) for value in values)
+        # 새 공식 시드만 이름 온도와 RPM을 키 뒤에 추가해 구형 키를 바꾸지 않습니다.
+        if self.temperature_setting is not None or self.spin_rpm is not None:
+            extra_values = [self.temperature_setting, self.spin_rpm]
+            # 기존 AI 공식 시드는 두 값으로 만든 키를 유지하고, 새 강도 값이 있을 때만 확장합니다.
+            if self.wash_strength is not None:
+                extra_values.append(self.wash_strength)
+            key += "|" + json.dumps(extra_values, ensure_ascii=False)
+        elif self.wash_strength is not None:
+            # 숫자 온도·RPM만 있던 구형 키도 새 강도가 제공되지 않으면 그대로 유지됩니다.
+            key += "|" + json.dumps([None, None, self.wash_strength], ensure_ascii=False)
+        return key
 
 
 class CourseSeed(BaseModel):
@@ -113,6 +132,10 @@ class MachineModelSeed(BaseModel):
     source_url: str | None = Field(default=None, max_length=500)
     verification_status: str = Field(min_length=1, max_length=30)
     verified_scope: str | None = Field(default=None, max_length=500)
+    capacity_kg: float | None = Field(default=None, gt=0)
+    release_year: int | None = Field(default=None, ge=1900, le=2100)
+    capacity_source_url: str | None = Field(default=None, max_length=500)
+    capacity_verification_status: str | None = Field(default=None, max_length=30)
     courses: list[CourseSeed] = Field(default_factory=list)
 
     @model_validator(mode="after")
@@ -162,6 +185,7 @@ def _upsert_product(db: Session, seed: ProductSeed) -> Product:
     product.brand = seed.brand
     product.product_name = seed.product_name
     product.official_url = seed.official_url
+    product.catalog_details = seed.catalog_details
     product.source_type = seed.source_type
     product.verification_status = seed.verification_status
     # 부모 ID가 필요하므로 flush 후 하위 지침을 처리합니다.
@@ -183,6 +207,7 @@ def _upsert_product(db: Session, seed: ProductSeed) -> Product:
             db.add(instruction)
         # 같은 필드가 이미 있어도 출처와 확인 상태는 최신 입력으로 갱신합니다.
         instruction.value_text = instruction_seed.value_text
+        instruction.evidence = instruction_seed.evidence
         instruction.source_type = instruction_seed.source_type
         instruction.source_url = instruction_seed.source_url
         instruction.verification_status = instruction_seed.verification_status
@@ -205,6 +230,10 @@ def _upsert_machine_model(db: Session, seed: MachineModelSeed) -> MachineModel:
     machine.source_url = seed.source_url
     machine.verification_status = seed.verification_status
     machine.verified_scope = seed.verified_scope
+    machine.capacity_kg = seed.capacity_kg
+    machine.release_year = seed.release_year
+    machine.capacity_source_url = seed.capacity_source_url
+    machine.capacity_verification_status = seed.capacity_verification_status
     # 모델 ID가 있어야 코스의 외래 키를 채울 수 있습니다.
     db.flush()
     for course_seed in seed.courses:
@@ -244,12 +273,18 @@ def _upsert_machine_model(db: Session, seed: MachineModelSeed) -> MachineModel:
                 db.add(setting)
             # 확인된 조합의 각 값을 그대로 저장하며 없는 조합을 추측해 만들지 않습니다.
             setting.temperature_celsius = setting_seed.temperature_celsius
+            setting.temperature_setting = setting_seed.temperature_setting
+            setting.wash_strength = setting_seed.wash_strength
             setting.spin_level = setting_seed.spin_level
+            setting.spin_rpm = setting_seed.spin_rpm
             setting.water_level = setting_seed.water_level
             setting.dry_level = setting_seed.dry_level
             setting.duration_minutes = setting_seed.duration_minutes
             setting.source_url = setting_seed.source_url
             setting.verification_status = setting_seed.verification_status
+            setting.is_default = setting_seed.is_default
+            setting.manual_page = setting_seed.manual_page
+            setting.evidence = setting_seed.evidence
     return machine
 
 
@@ -297,19 +332,26 @@ def main() -> int:
 
     # 실행 파일 경로를 명시적으로 받도록 해 어떤 시드를 넣는지 확인 가능하게 합니다.
     parser = argparse.ArgumentParser(description="WashWise 검증 시드 로더")
-    parser.add_argument("--file", required=True, type=Path, help="시드 JSON 파일 경로")
+    source = parser.add_mutually_exclusive_group(required=True)
+    source.add_argument("--file", type=Path, help="시드 JSON 파일 경로")
+    source.add_argument("--washwise-demo", action="store_true", help="WashWise 검증 상품과 기기 적재")
     args = parser.parse_args()
     try:
         # 하나의 세션에서 전체 파일을 처리합니다.
         with SessionLocal() as db:
-            result = load_seed_file(db, args.file)
+            if args.washwise_demo:
+                from backend.seed.washwise_demo import verified_seed
+
+                result = load_seed_data(db, verified_seed())
+            else:
+                result = load_seed_file(db, args.file)
     except (OSError, json.JSONDecodeError, ValidationError) as exc:
         # 입력 파일 오류는 사용자에게 보여주되 비밀정보를 출력하지 않습니다.
         print(f"시드 입력 오류: {exc}")
         return 2
     except SQLAlchemyError as exc:
         # DB 오류는 상세 traceback 대신 실패 사실만 CLI에 보여줍니다.
-        print(f"시드 저장 실패: {exc}")
+        print(f"시드 저장 실패: {type(exc).__name__}")
         return 1
     # 성공한 개수를 JSON으로 출력해 반복 실행 결과를 비교할 수 있게 합니다.
     print(json.dumps(result, ensure_ascii=False))

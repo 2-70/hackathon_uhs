@@ -1,0 +1,76 @@
+[
+  {
+    "product": {
+      "id": "coor-3270",
+      "name": "에센셜 후디 스웻셔츠 (멜란지그레이)",
+      "brand": "COOR",
+      "color": "멜란지그레이",
+      "source_url": "https://www.coor.kr/product/%EC%97%90%EC%84%BC%EC%85%9C-%ED%9B%84%EB%94%94-%EC%8A%A4%EC%9B%BB%EC%85%94%EC%B8%A0-%EB%A9%9C%EB%9E%80%EC%A7%80%EA%B7%B8%EB%A0%88%EC%9D%B4/3270/category/78/display/1/"
+    },
+    "garment_type": "후디 스웻셔츠",
+    "image_sha256": [
+      "3b7fff47e9ddc3141d732a9d1c38e71b6013abe89de432b1c57392b02c92bfaf",
+      "afee4d4e8c5ea3cc4cac583d4a45c5b6820aaca84fe4f46f51881fb9e8e7a9f1"
+    ],
+    "reference_image_url": "https://img.29cm.co.kr/next-product/2025/08/21/0e94e743c04c4442b03b8627c0c9b9d7_20250821174317.png",
+    "reference_page_url": "https://www.29cm.co.kr/products/3448481",
+    "care": {
+      "fiber_content": {"value": "면 100%", "evidence": "COTTON 100%"},
+      "wash_method": {"value": "hand_wash", "evidence": "DRY CLEAN, HANDWASH"},
+      "professional_cleaning": {"value": "드라이클리닝도 가능해요.", "evidence": "DRY CLEAN, HANDWASH"},
+      "special_instructions": {"value": "뒤집어서 세탁하는 방법은 권장하지 않아요.", "evidence": "본 제품은 이면 세탁을 권장하지 않습니다."}
+    }
+  },
+  {
+    "product": {
+      "id": "nike-ix1937-001",
+      "name": "나이키 솔로 플리스 남성 크루넥 스웻셔츠",
+      "brand": "Nike",
+      "color": "Total Black/세일",
+      "product_code": "IX1937-001",
+      "source_url": "https://www.nike.com/kr/t/%EB%82%98%EC%9D%B4%ED%82%A4-%EC%86%94%EB%A1%9C-%ED%94%8C%EB%A6%AC%EC%8A%A4-%EB%82%A8%EC%84%B1-%ED%81%AC%EB%A3%A8%EB%84%A5-%EC%8A%A4%EC%9B%BB%EC%85%94%EC%B8%A0-VCQKex1s/IX1937-001"
+    },
+    "garment_type": "크루넥 스웻셔츠",
+    "image_sha256": [
+      "dd7f0e9be21a663148b87b9f75f77c806e27aacafa593519ce6f1f003bb78dce"
+    ],
+    "reference_image_url": "https://static.nike.com/a/images/t_web_pdp_936_v2/f_auto%2Cu_9ddf04c7-2a9a-4d76-add1-d15af8f0263d%2Cc_scale%2Cfl_relative%2Cw_1.0%2Ch_1.0%2Cfl_layer_apply/11907b3b-4cb5-4c19-afaa-eb2540276522/AS%2BM%2BNK%2BSOLO%2BBB%2BLS%2BCREW.png",
+    "reference_page_url": "https://www.nike.com/kr/t/%EB%82%98%EC%9D%B4%ED%82%A4-%EC%86%94%EB%A1%9C-%ED%94%8C%EB%A6%AC%EC%8A%A4-%EB%82%A8%EC%84%B1-%ED%81%AC%EB%A3%A8%EB%84%A5-%EC%8A%A4%EC%9B%BB%EC%85%94%EC%B8%A0-VCQKex1s/IX1937-001",
+    "care": {
+      "fiber_content": {
+        "value": "면 82%, 폴리에스터 18%",
+        "evidence": "82% 면/18% 폴리에스터"
+      },
+      "wash_method": {
+        "value": "machine_wash",
+        "evidence": "세탁기 사용 가능"
+      }
+    }
+  },
+  {
+    "product": {
+      "id": "nike-if0698-365",
+      "name": "나이키 스포츠웨어 클럽 남성 프렌치 테리 크루넥 스웻셔츠",
+      "brand": "Nike",
+      "color": "말라카이트/라이트닝",
+      "product_code": "IF0698-365",
+      "source_url": "https://www.nike.com/kr/t/%EB%82%98%EC%9D%B4%ED%82%A4-%EC%8A%A4%ED%8F%AC%EC%B8%A0%EC%9B%A8%EC%96%B4-%ED%81%B4%EB%9F%BD-%EB%82%A8%EC%84%B1-%ED%94%84%EB%A0%8C%EC%B9%98-%ED%85%8C%EB%A6%AC-%ED%81%AC%EB%A3%A8%EB%84%A5-%EC%8A%A4%EC%9B%BB%EC%85%94%EC%B8%A0-EWkfJ1Q9/IF0698-365"
+    },
+    "garment_type": "크루넥 스웻셔츠",
+    "image_sha256": [
+      "f8a9b5a816f36a450bc020c873116b00705b7e7f5bf869806adfe28e1225dbd2"
+    ],
+    "reference_image_url": "https://static.nike.com/a/images/t_web_pdp_936_v2/f_auto%2Cu_9ddf04c7-2a9a-4d76-add1-d15af8f0263d%2Cc_scale%2Cfl_relative%2Cw_1.0%2Ch_1.0%2Cfl_layer_apply/c5a031e7-b034-46fc-ab8f-eaf12f73bb81/AS%2BM%2BNK%2BCLUB%2BFT%2BCREW%2BFUTBOL.png",
+    "reference_page_url": "https://www.nike.com/kr/t/%EB%82%98%EC%9D%B4%ED%82%A4-%EC%8A%A4%ED%8F%AC%EC%B8%A0%EC%9B%A8%EC%96%B4-%ED%81%B4%EB%9F%BD-%EB%82%A8%EC%84%B1-%ED%94%84%EB%A0%8C%EC%B9%98-%ED%85%8C%EB%A6%AC-%ED%81%AC%EB%A3%A8%EB%84%A5-%EC%8A%A4%EC%9B%BB%EC%85%94%EC%B8%A0-EWkfJ1Q9/IF0698-365",
+    "care": {
+      "fiber_content": {
+        "value": "면 80%, 폴리에스터 20%",
+        "evidence": "80% 면/20% 폴리에스터"
+      },
+      "wash_method": {
+        "value": "machine_wash",
+        "evidence": "세탁기 사용 가능"
+      }
+    }
+  }
+]

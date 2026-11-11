@@ -6,8 +6,13 @@ requires-python = ">=3.11"
 dependencies = [
     "alembic>=1.14,<2",
     "fastapi>=0.115,<1",
+    "fonttools>=4.55,<5",
+    "httpx>=0.28,<1",
+    "pillow>=11.3,<13",
     "psycopg[binary]>=3.2,<4",
+    "pypdf>=5,<7",
     "pydantic-settings>=2.6,<3",
+    "python-multipart>=0.0.22,<1",
     "sqlalchemy>=2.0,<3",
     "uvicorn[standard]>=0.30,<1",
 ]

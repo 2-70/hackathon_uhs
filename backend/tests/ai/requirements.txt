@@ -1,0 +1,7 @@
+fastapi>=0.115
+httpx>=0.28
+pillow>=11.3
+pydantic>=2.11
+python-multipart>=0.0.22
+uvicorn>=0.34
+pytest>=8.3

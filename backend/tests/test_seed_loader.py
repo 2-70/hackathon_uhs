@@ -12,6 +12,7 @@ from backend.app.db.models import (
     ProductCareInstruction,
 )
 from backend.seed.load_verified import load_seed_data
+from backend.seed.washwise_demo import verified_seed
 
 
 def full_seed() -> dict:
@@ -103,3 +104,18 @@ def test_invalid_seed_is_rejected_before_writes(db_session):
     # 검증 실패 후에는 제품·기기 어느 것도 부분 저장되지 않습니다.
     assert count_rows(db_session, Product) == 0
     assert count_rows(db_session, MachineModel) == 0
+
+
+def test_official_named_settings_keep_stable_keys(db_session):
+    """공식 LG 이름형 설정을 두 번 넣어도 새 설정 조합이 생기지 않습니다."""
+
+    seed = verified_seed()
+    load_seed_data(db_session, seed)
+    first_keys = set(db_session.scalars(select(MachineCourseSetting.setting_key)).all())
+    load_seed_data(db_session, seed)
+    second_keys = set(db_session.scalars(select(MachineCourseSetting.setting_key)).all())
+
+    # 공식 파일의 3개 코스별 기본 조합만 남고 섭씨·RPM 추정 조합은 생기지 않습니다.
+    assert count_rows(db_session, MachineCourseSetting) == 3
+    assert first_keys == second_keys
+    assert all("Warm" in key or "Cold" in key or "Hot" in key for key in second_keys)

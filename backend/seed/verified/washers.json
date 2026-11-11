@@ -1,0 +1,61 @@
+[
+  {
+    "id": "lg-wm4000hwa",
+    "manufacturer": "LG",
+    "model_number": "WM4000HWA",
+    "market": "US",
+    "source_url": "https://www.lg.com/us/support/product/lg-WM4000HWA.ABWEMUS",
+    "manual_url": "https://media.us.lg.com/m/6d5d734b0871fbdf/original/WM4000_Owners-Manual.pdf",
+    "verified_on": "2026-11-11",
+    "cycles": [
+      {
+        "id": "normal",
+        "name": "Normal",
+        "name_ko": "표준",
+        "verified_settings": [
+          {
+            "wash_temperature_setting": "Warm",
+            "wash_temperature_c": null,
+            "spin_setting": "High",
+            "spin_rpm": null,
+            "is_default": true,
+            "manual_page": 24,
+            "evidence": "Cycle Guide, Normal — 기본 물온도 Warm, 기본 탈수 High."
+          }
+        ]
+      },
+      {
+        "id": "delicates",
+        "name": "Delicates",
+        "name_ko": "섬세",
+        "verified_settings": [
+          {
+            "wash_temperature_setting": "Cold",
+            "wash_temperature_c": null,
+            "spin_setting": "Medium",
+            "spin_rpm": null,
+            "is_default": true,
+            "manual_page": 25,
+            "evidence": "Cycle Guide, Delicates — 기본 물온도 Cold, 기본 탈수 Medium."
+          }
+        ]
+      },
+      {
+        "id": "speed-wash",
+        "name": "Speed Wash",
+        "name_ko": "급속",
+        "verified_settings": [
+          {
+            "wash_temperature_setting": "Hot",
+            "wash_temperature_c": null,
+            "spin_setting": "Extra High",
+            "spin_rpm": null,
+            "is_default": true,
+            "manual_page": 26,
+            "evidence": "Cycle Guide, Speed Wash — 기본 물온도 Hot, 기본 탈수 Extra High."
+          }
+        ]
+      }
+    ]
+  }
+]

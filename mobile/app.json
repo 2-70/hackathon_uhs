@@ -1,0 +1,28 @@
+{
+  "expo": {
+    "name": "WashWise",
+    "slug": "washwise-mobile",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "scheme": "washwise",
+    "userInterfaceStyle": "light",
+    "platforms": [
+      "android",
+      "web"
+    ],
+    "android": {
+      "package": "com.hackathonuhs.washwise"
+    },
+    "plugins": [
+      "expo-router",
+      [
+        "expo-image-picker",
+        {
+          "cameraPermission": "의류와 세탁 라벨을 촬영하려면 카메라 접근을 허용하세요.",
+          "photosPermission": "의류와 세탁 라벨 사진을 가져오려면 사진 접근을 허용하세요.",
+          "microphonePermission": false
+        }
+      ]
+    ]
+  }
+}
