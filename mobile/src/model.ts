@@ -6,10 +6,12 @@ export type Garment = {
   material: string;
   wash: 'machine' | 'hand' | 'none' | 'unknown';
   maxTemp: number | null;
-  gentle: boolean;
+  gentle: boolean | null;
   dryer: 'yes' | 'no' | 'unknown';
   drying: string;
-  source: 'manual' | 'sample-label' | 'sample-product';
+  source: 'manual' | 'sample-label' | 'sample-product' | 'care-label' | 'official-product';
+  sourceReference?: string;
+  careNotes?: string;
   photo?: string;
 };
 
@@ -20,6 +22,7 @@ export type Course = {
   name: string;
   gentle: boolean;
   settings: { temp: number; spin: number }[];
+  verifiedSettings?: { id: string; temperature: string; spin: string }[];
 };
 
 export type Machine = {

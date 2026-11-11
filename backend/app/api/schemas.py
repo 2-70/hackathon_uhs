@@ -12,6 +12,7 @@ SourceType = Literal[
     "photo_inference",
 ]
 VerificationStatus = Literal["confirmed", "unconfirmed"]
+CareWashMethod = Literal["machine_wash", "hand_wash", "do_not_wash"]
 
 
 class ErrorPayload(BaseModel):
@@ -58,6 +59,9 @@ class WardrobeCreate(BaseModel):
     category: str | None = Field(default=None, max_length=80)
     color: str | None = Field(default=None, max_length=80)
     material: str | None = Field(default=None, max_length=120)
+    care_wash_method: CareWashMethod | None = None
+    care_gentle: bool | None = None
+    care_tumble_dry_allowed: bool | None = None
     care_temperature_celsius: int | None = Field(default=None, ge=0, le=100)
     care_spin_level: str | None = Field(default=None, max_length=40)
     care_dry_method: str | None = Field(default=None, max_length=80)
@@ -75,6 +79,9 @@ class WardrobeUpdate(BaseModel):
     category: str | None = Field(default=None, max_length=80)
     color: str | None = Field(default=None, max_length=80)
     material: str | None = Field(default=None, max_length=120)
+    care_wash_method: CareWashMethod | None = None
+    care_gentle: bool | None = None
+    care_tumble_dry_allowed: bool | None = None
     care_temperature_celsius: int | None = Field(default=None, ge=0, le=100)
     care_spin_level: str | None = Field(default=None, max_length=40)
     care_dry_method: str | None = Field(default=None, max_length=80)
@@ -116,7 +123,9 @@ class MachineCourseSettingRead(BaseModel):
     id: str
     setting_key: str
     temperature_celsius: int | None
+    temperature_setting: str | None = None
     spin_level: str | None
+    spin_rpm: int | None = None
     water_level: str | None
     dry_level: str | None
     duration_minutes: int | None

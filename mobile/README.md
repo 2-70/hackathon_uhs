@@ -1,30 +1,29 @@
-# WashWise Android
+# WashWise 모바일 앱
 
-React Native와 Expo로 의류 등록부터 세탁·건조 계획 확인까지 구현하는 앱입니다. 현재는 개발용 응답을 사용합니다. 사진을 선택하거나 촬영할 수 있고, 분석 버튼을 누르면 사진 내용과 관계없이 개발용 결과가 표시됩니다. 옷장과 선택한 세탁기는 기기에 저장됩니다.
+React Native와 Expo로 의류 사진과 세탁 라벨을 분석하고, 옷장에 저장하거나 세탁기 코스를 확인할 수 있습니다. 옷장 정보와 등록한 세탁기는 API를 통해 DB에 저장합니다.
 
 ## 실행
 
-저장소 루트에서 `mobile/`로 이동해 아래 명령을 실행합니다. Node.js 22.18 이상인 22.x 또는 Node.js 24.3 이상인 24.x와 pnpm 11.25.0을 사용합니다. 앱은 Expo SDK 58을 사용합니다.
+[백엔드 실행 방법](../README.md)에 따라 API를 먼저 실행합니다. 새 PowerShell에서 저장소 루트의 `mobile/`로 이동해 아래 명령을 실행합니다. Node.js 22.18 이상인 22.x 또는 Node.js 24.3 이상인 24.x와 pnpm 11.25.0을 사용합니다.
 
 ```powershell
 cd mobile
 pnpm install --frozen-lockfile
-pnpm start
+$env:EXPO_PUBLIC_API_URL = 'http://127.0.0.1:8001'
+pnpm web
 ```
 
-Android 기기에서 SDK 58을 지원하는 Expo Go를 열고 Metro에 표시된 QR 코드를 스캔합니다. 휴대전화와 개발 PC는 같은 네트워크에 연결합니다. Android 에뮬레이터에서는 `pnpm android`를 실행합니다. [Expo 프로젝트 실행 가이드](https://docs.expo.dev/get-started/start-developing/)
+웹 앱은 [localhost:8081](http://localhost:8081)에서 엽니다. Android 에뮬레이터에서는 API 주소를 `http://10.0.2.2:8001`로 설정한 뒤 `pnpm android`를 실행합니다. 실기기는 PC와 같은 네트워크에서 API를 `--host 0.0.0.0`으로 실행하고 `EXPO_PUBLIC_API_URL`에 PC의 LAN IP를 사용합니다. `pnpm start` 후 SDK 58을 지원하는 Expo Go에서 QR 코드를 스캔합니다. [Expo 프로젝트 실행 가이드](https://docs.expo.dev/get-started/start-developing/)
 
-## 개발용 흐름 확인
+## 시연 흐름
 
-1. 홈에서 **의류 등록**을 열어 카메라로 의류를 촬영하거나 사진 보관함에서 고릅니다. 카메라 권한을 거부한 경우 사진 선택 또는 직접 입력으로 진행합니다. 사진 분석에 표시되는 관리정보를 검토하고 옷장에 저장합니다.
-2. **우리 집 세탁기**에서 `WW-DEMO 100`을 검색해 등록합니다.
-3. **내 옷장**에서 흰 면 티셔츠, 크림색 셔츠, 검은 데님 팬츠와 베이지 울 니트를 골라 드럼에 담습니다. **가상 드럼**에서 **세탁 분석 시작**을 누릅니다.
-4. 밝은 옷과 어두운 옷이 분리되는지, 울 니트에 손세탁 안내가 표시되는지 확인합니다. 드럼에서 데님 팬츠를 빼고 계획이 다시 계산되는지 확인합니다.
-5. 사용하려는 코스, 온도, 탈수를 입력해 권장 설정과 비교합니다. 앱을 다시 열어 저장한 의류와 세탁기가 남아 있는지 확인합니다.
+1. **의류 등록**에서 의류 사진을 선택합니다. 동일 상품을 확인하면 공식 출처와 확인된 세탁 방법이 표시됩니다. 확인에 필요한 정보가 부족하면 안내에 따라 안쪽 세탁 라벨을 추가합니다.
+2. **세탁 라벨**에서 세탁 기호와 글자가 보이는 사진을 분석합니다. 확인된 관리 정보를 검토하고 옷장에 저장합니다.
+3. **우리 집 세탁기**에서 `WM4000HWA`를 검색하고 등록합니다. 앱을 다시 열어 의류와 세탁기가 남아 있는지 확인합니다.
 
 ## 검사
 
-`mobile/`에서 실행합니다. `node --test`는 의존성을 설치하기 전에도 개발용 응답과 세탁 계획을 검사할 수 있습니다.
+`mobile/`에서 실행합니다. `node --test`는 세탁 계획 및 개발용 테스트 데이터를 검사합니다.
 
 ```powershell
 node --test
@@ -52,11 +51,3 @@ pnpm dlx eas-cli@latest build --platform android --profile preview
 ```
 
 빌드 상세 페이지에서 APK를 내려받아 기기에서 열거나 `adb install <APK 경로>`로 설치합니다. [Expo APK 빌드 가이드](https://docs.expo.dev/build-reference/apk/)
-
-실제 API 연결과 실기기 시연 검증은 공용 API 계약이 준비된 뒤 진행합니다.
-
-## 현재 검증 결과
-
-- 개발용 응답 테스트 4개, TypeScript 타입 검사, Android Hermes 번들 생성, Expo 설정 확인을 통과했습니다.
-- 공용 API 계약과 서버가 준비되면 실제 사진 업로드, 공식 상품 정보 조회, 옷장·세탁 계획 저장을 확인합니다.
-- Android SDK와 연결된 실기기가 없는 환경에서 검사했습니다. APK 빌드·설치와 카메라·권한 흐름은 실기기 검증 단계에서 확인합니다.

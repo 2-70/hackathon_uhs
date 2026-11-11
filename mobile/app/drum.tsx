@@ -30,9 +30,11 @@ export default function Drum() {
     const selected = new Set(basketIds);
     return garments.filter(({ id }) => selected.has(id));
   }, [garments, basketIds]);
+  const hasNumericSettings = machine?.courses.some((course) => course.settings.length > 0) ?? false;
   const input = useMemo(() => (
-    analysisStarted && machine && contents.length > 0 ? { garments: contents, machine } : null
-  ), [analysisStarted, machine, contents]);
+    analysisStarted && machine && hasNumericSettings && contents.length > 0
+      ? { garments: contents, machine } : null
+  ), [analysisStarted, machine, hasNumericSettings, contents]);
   const [attempt, setAttempt] = useState(0);
   const [completed, setCompleted] = useState<PlanRequest | null>(null);
   const scrollRef = useRef<ScrollViewInstance>(null);
@@ -81,6 +83,7 @@ export default function Drum() {
     }
     if (!contents.length) return <Button onPress={openWardrobe}>옷장에서 담기</Button>;
     if (!machine) return <Button onPress={openMachines}>세탁기 등록</Button>;
+    if (!hasNumericSettings) return <Notice>공식 설명서에서 온도와 탈수의 수치 조합을 확인하지 못해 이 모델의 세탁 계획은 계산할 수 없어요.</Notice>;
     return <Button onPress={startAnalysis}>세탁 분석 시작</Button>;
   }
 
@@ -208,7 +211,7 @@ function PlanDetails({ plan, machine, garments }: { plan: Plan; machine: Machine
     <View style={drum.results}>
       <View style={drum.resultHeading}>
         <Text accessibilityRole="header" style={styles.title}>세탁 계획 · {plan.groups.length}회</Text>
-        <Text style={styles.muted}>샘플 코스 및 관리정보 기준 · 적재 용량 미검증</Text>
+        <Text style={styles.muted}>확인된 코스 및 관리정보 기준 · 적재 용량 미검증</Text>
       </View>
       {plan.groups.map((group, index) => {
         const expanded = validationGroup === group.id;

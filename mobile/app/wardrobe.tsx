@@ -73,7 +73,7 @@ export default function WardrobeScreen() {
         <View style={local.heroInner}>
           <View style={local.heroHeading}>
             <Text accessibilityRole="header" style={local.heroTitle}>내 옷장</Text>
-            {ready && !loadError && <Text style={local.heroCount}>의류 {garments.length}벌 · 샘플 모드</Text>}
+            {ready && !loadError && <Text style={local.heroCount}>의류 {garments.length}벌</Text>}
           </View>
           <Pressable
             accessibilityRole="button"

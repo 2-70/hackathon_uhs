@@ -1,24 +1,27 @@
-# WashWise Backend
+# WashWise
 
-WashWise의 첫 번째 백엔드 기반입니다. FastAPI, SQLAlchemy, Alembic을 사용하며 로컬에서는 SQLite로 빠르게 검증하고 운영에서는 Neon PostgreSQL을 사용하도록 구성했습니다.
+WashWise는 의류 사진 및 세탁 라벨 분석, 공식 상품 관리 정보 조회, 옷장 관리, 세탁기 코스 조회를 제공합니다. FastAPI와 Expo를 사용하며 DB는 로컬 SQLite 또는 Neon PostgreSQL에 연결할 수 있습니다.
 
 ## 핵심 실행
 
 ```powershell
 uv sync --extra dev
-Copy-Item .env.example .env
+if (-not (Test-Path .env)) { Copy-Item .env.example .env }
+$env:ENABLE_AI_ROUTER = 'true'
+$env:GEMINI_API_KEY = Read-Host 'Gemini API key' -MaskInput
 uv run alembic upgrade head
-uv run uvicorn backend.app.main:app --reload
+uv run python -m backend.seed.load_verified --washwise-demo
+uv run uvicorn backend.app.main:app --port 8001
 ```
 
-실행 후 `http://127.0.0.1:8000/docs`에서 OpenAPI 문서를 확인할 수 있습니다.
+실행 후 [OpenAPI 문서](http://127.0.0.1:8001/docs)를 열거나 [모바일 앱 실행 방법](mobile/README.md)에 따라 브라우저에서 앱을 실행합니다.
 
 ## 구현 범위
 
-- 구현: 상태 확인, 옷장 CRUD, 기기 모델·코스·지원 설정 조합 조회, 사용자 기기 등록·조회, 공식 데이터 저장 모델, 멱등성 시드 로더, 공통 오류 형식
-- 계약만 제공: AI 분석, 제품 검색, 세탁 계획, 설정 적합성 판정
-- 검증 완료: Neon PostgreSQL 연결, TLS, 마이그레이션, 실제 HTTP 저장·조회·수정·삭제와 시드 중복 방지
-- 미검증: 유상진 님의 공식 검증 시드, 이진영 님의 실제 모바일 빌드 연동
+- 의류·라벨 사진 분석, 검증된 상품 매칭과 공식 관리 정보 조회
+- 옷장 저장·수정·삭제, 세탁기와 공식 코스 조회, 사용자 기기 등록
+- 재실행 가능한 검증 시드로 공식 상품 3개와 LG WM4000HWA 코스 3개 제공
+- 공용 서버의 세탁 계획과 설정 적합성 판정은 계약 단계입니다.
 
 자세한 요청·응답 형식은 [docs/api-contract.md](docs/api-contract.md)를 참고합니다.
 
@@ -34,8 +37,10 @@ FastAPI는 pooled URL, Alembic은 unpooled URL을 사용하며 표준 PostgreSQL
 neon deploy
 npm run build
 uv run alembic upgrade head
-npm start
+uv run python -m backend.seed.load_verified --washwise-demo
 ```
+
+`DATABASE_URL`이 설정되면 위의 백엔드 실행 명령으로 Neon에 연결합니다.
 
 `npm run build`는 Python 문법, 앱 의존성 및 OpenAPI 생성을 검사합니다. 프런트엔드 번들을 만드는 명령은 아닙니다.
 Node 의존성은 Neon 설정용이며 실제 API는 계속 Python FastAPI로 실행합니다.

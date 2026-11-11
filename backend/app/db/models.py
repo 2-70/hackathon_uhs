@@ -51,6 +51,9 @@ class WardrobeItem(TimestampMixin, Base):
     # 색상과 소재는 모르는 경우 null로 보존합니다.
     color: Mapped[str | None] = mapped_column(String(80), nullable=True)
     material: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    care_wash_method: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    care_gentle: Mapped[bool | None] = mapped_column(nullable=True)
+    care_tumble_dry_allowed: Mapped[bool | None] = mapped_column(nullable=True)
     # 확인된 온도·탈수·건조 정보만 각각 저장하고 모르면 null로 둡니다.
     care_temperature_celsius: Mapped[int | None] = mapped_column(Integer, nullable=True)
     care_spin_level: Mapped[str | None] = mapped_column(String(40), nullable=True)
@@ -80,6 +83,7 @@ class Product(TimestampMixin, Base):
     product_name: Mapped[str] = mapped_column(String(200), nullable=False)
     # 공식 문서의 위치를 기록하되 비밀정보는 저장하지 않습니다.
     official_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    catalog_details: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     # 제품 정보의 출처 유형과 확인 상태를 함께 보관합니다.
     source_type: Mapped[str] = mapped_column(String(50), nullable=False)
     verification_status: Mapped[str] = mapped_column(String(30), nullable=False)
@@ -103,6 +107,7 @@ class ProductCareInstruction(Base):
     field_name: Mapped[str] = mapped_column(String(100), nullable=False)
     # 원래 값의 표현을 보존해 숫자·문자·범위 모두 담을 수 있게 합니다.
     value_text: Mapped[str] = mapped_column(String(200), nullable=False)
+    evidence: Mapped[str | None] = mapped_column(String(300), nullable=True)
     # 필드별 출처와 확인 상태는 제품 기본 정보와 별도로 추적합니다.
     source_type: Mapped[str] = mapped_column(String(50), nullable=False)
     source_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
@@ -175,7 +180,9 @@ class MachineCourseSetting(Base):
     setting_key: Mapped[str] = mapped_column(String(240), nullable=False)
     # 실제 지원 여부를 설명하는 세탁기 설정 값입니다.
     temperature_celsius: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    temperature_setting: Mapped[str | None] = mapped_column(String(40), nullable=True)
     spin_level: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    spin_rpm: Mapped[int | None] = mapped_column(Integer, nullable=True)
     water_level: Mapped[str | None] = mapped_column(String(40), nullable=True)
     dry_level: Mapped[str | None] = mapped_column(String(40), nullable=True)
     duration_minutes: Mapped[int | None] = mapped_column(Integer, nullable=True)

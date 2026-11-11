@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react';
 import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { searchMachines } from '../src/mock';
+import { searchMachines } from '../src/api';
 import type { Machine } from '../src/model';
 import { useLaundry } from '../src/store';
 import { Button, Notice, Screen, palette, styles } from '../src/ui';
@@ -116,14 +116,14 @@ export default function MachinesScreen() {
             </View>
           ) : matches.length === 0 ? (
             <View style={local.feedback}>
-              <Text style={styles.title}>일치하는 샘플 모델이 없어요</Text>
+              <Text style={styles.title}>일치하는 세탁기 모델이 없어요</Text>
               <Text style={styles.muted}>모델명의 일부만 입력해 보세요.</Text>
               {query.length > 0 && <Button tone="secondary" onPress={() => setQuery('')}>검색어 지우기</Button>}
             </View>
           ) : (
             <View accessibilityRole="radiogroup">
               <View style={local.listHeader}>
-                <Text style={local.label}>샘플 모델 {matches.length}개</Text>
+                <Text style={local.label}>등록 모델 {matches.length}개</Text>
               </View>
               {matches.map((candidate, index) => {
                 const checked = candidate.id === preview?.id;
@@ -169,22 +169,22 @@ export default function MachinesScreen() {
             <View style={local.table}>
               <View style={[local.tableRow, local.tableHeader]}>
                 <Text style={[local.label, local.courseCell]}>코스</Text>
-                <Text style={[local.label, local.numberCell]}>온도 °C</Text>
-                <Text style={[local.label, local.numberCell]}>탈수 rpm</Text>
+                <Text style={[local.label, local.numberCell]}>물온도</Text>
+                <Text style={[local.label, local.numberCell]}>탈수</Text>
               </View>
               {preview.courses.map((course, courseIndex) => (
                 <View key={course.id} style={courseIndex > 0 && local.courseDivider}>
-                  {course.settings.map(({ temp, spin }, index) => (
+                  {(course.verifiedSettings ?? []).map(({ id, temperature, spin }, index) => (
                     <View
-                      key={`${temp}-${spin}`}
+                      key={id}
                       accessible
-                      accessibilityLabel={`${course.name}, ${temp}도, 분당 ${spin}회 회전`}
+                      accessibilityLabel={`${course.name}, 물온도 ${temperature}, 탈수 ${spin}`}
                       style={[local.tableRow, index > 0 && local.continuationRow]}
                     >
                       <Text style={[local.tableValue, local.courseCell]}>
                         {index === 0 ? course.name : ''}
                       </Text>
-                      <Text style={[local.tableValue, local.numberCell, local.numeric]}>{temp}</Text>
+                      <Text style={[local.tableValue, local.numberCell, local.numeric]}>{temperature}</Text>
                       <Text style={[local.tableValue, local.numberCell, local.numeric]}>{spin}</Text>
                     </View>
                   ))}

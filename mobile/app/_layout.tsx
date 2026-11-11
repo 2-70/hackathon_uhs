@@ -50,7 +50,7 @@ function AppShell() {
           >
             <Ionicons name="chevron-back" size={22} color={palette.ink} />
           </Pressable>
-          <Text style={layout.mode}>샘플 모드</Text>
+          <Text style={layout.mode}>의류 관리</Text>
         </View>
       )}
 

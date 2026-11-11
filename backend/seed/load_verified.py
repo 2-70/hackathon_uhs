@@ -26,6 +26,7 @@ class CareInstructionSeed(BaseModel):
     model_config = ConfigDict(extra="forbid")
     field_name: str = Field(min_length=1, max_length=100)
     value_text: str = Field(min_length=1, max_length=200)
+    evidence: str | None = Field(default=None, max_length=300)
     source_type: str = Field(min_length=1, max_length=50)
     source_url: str | None = Field(default=None, max_length=500)
     verification_status: str = Field(min_length=1, max_length=30)
@@ -39,6 +40,7 @@ class ProductSeed(BaseModel):
     brand: str = Field(min_length=1, max_length=120)
     product_name: str = Field(min_length=1, max_length=200)
     official_url: str | None = Field(default=None, max_length=500)
+    catalog_details: dict[str, Any] | None = None
     source_type: str = Field(min_length=1, max_length=50)
     verification_status: str = Field(min_length=1, max_length=30)
     care_instructions: list[CareInstructionSeed] = Field(default_factory=list)
@@ -59,7 +61,9 @@ class SettingSeed(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
     temperature_celsius: int | None = Field(default=None, ge=0, le=100)
+    temperature_setting: str | None = Field(default=None, max_length=40)
     spin_level: str | None = Field(default=None, max_length=40)
+    spin_rpm: int | None = Field(default=None, ge=0)
     water_level: str | None = Field(default=None, max_length=40)
     dry_level: str | None = Field(default=None, max_length=40)
     duration_minutes: int | None = Field(default=None, ge=0)
@@ -79,7 +83,10 @@ class SettingSeed(BaseModel):
             self.duration_minutes,
         )
         # None도 문자열로 명시해 비어 있는 값의 위치를 보존합니다.
-        return "|".join("null" if value is None else str(value) for value in values)
+        key = "|".join("null" if value is None else str(value) for value in values)
+        if self.temperature_setting is not None or self.spin_rpm is not None:
+            key += "|" + json.dumps([self.temperature_setting, self.spin_rpm], ensure_ascii=False)
+        return key
 
 
 class CourseSeed(BaseModel):
@@ -162,6 +169,7 @@ def _upsert_product(db: Session, seed: ProductSeed) -> Product:
     product.brand = seed.brand
     product.product_name = seed.product_name
     product.official_url = seed.official_url
+    product.catalog_details = seed.catalog_details
     product.source_type = seed.source_type
     product.verification_status = seed.verification_status
     # 부모 ID가 필요하므로 flush 후 하위 지침을 처리합니다.
@@ -183,6 +191,7 @@ def _upsert_product(db: Session, seed: ProductSeed) -> Product:
             db.add(instruction)
         # 같은 필드가 이미 있어도 출처와 확인 상태는 최신 입력으로 갱신합니다.
         instruction.value_text = instruction_seed.value_text
+        instruction.evidence = instruction_seed.evidence
         instruction.source_type = instruction_seed.source_type
         instruction.source_url = instruction_seed.source_url
         instruction.verification_status = instruction_seed.verification_status
@@ -244,7 +253,9 @@ def _upsert_machine_model(db: Session, seed: MachineModelSeed) -> MachineModel:
                 db.add(setting)
             # 확인된 조합의 각 값을 그대로 저장하며 없는 조합을 추측해 만들지 않습니다.
             setting.temperature_celsius = setting_seed.temperature_celsius
+            setting.temperature_setting = setting_seed.temperature_setting
             setting.spin_level = setting_seed.spin_level
+            setting.spin_rpm = setting_seed.spin_rpm
             setting.water_level = setting_seed.water_level
             setting.dry_level = setting_seed.dry_level
             setting.duration_minutes = setting_seed.duration_minutes
@@ -297,19 +308,26 @@ def main() -> int:
 
     # 실행 파일 경로를 명시적으로 받도록 해 어떤 시드를 넣는지 확인 가능하게 합니다.
     parser = argparse.ArgumentParser(description="WashWise 검증 시드 로더")
-    parser.add_argument("--file", required=True, type=Path, help="시드 JSON 파일 경로")
+    source = parser.add_mutually_exclusive_group(required=True)
+    source.add_argument("--file", type=Path, help="시드 JSON 파일 경로")
+    source.add_argument("--washwise-demo", action="store_true", help="WashWise 검증 상품과 기기 적재")
     args = parser.parse_args()
     try:
         # 하나의 세션에서 전체 파일을 처리합니다.
         with SessionLocal() as db:
-            result = load_seed_file(db, args.file)
+            if args.washwise_demo:
+                from backend.seed.washwise_demo import verified_seed
+
+                result = load_seed_data(db, verified_seed())
+            else:
+                result = load_seed_file(db, args.file)
     except (OSError, json.JSONDecodeError, ValidationError) as exc:
         # 입력 파일 오류는 사용자에게 보여주되 비밀정보를 출력하지 않습니다.
         print(f"시드 입력 오류: {exc}")
         return 2
     except SQLAlchemyError as exc:
         # DB 오류는 상세 traceback 대신 실패 사실만 CLI에 보여줍니다.
-        print(f"시드 저장 실패: {exc}")
+        print(f"시드 저장 실패: {type(exc).__name__}")
         return 1
     # 성공한 개수를 JSON으로 출력해 반복 실행 결과를 비교할 수 있게 합니다.
     print(json.dumps(result, ensure_ascii=False))

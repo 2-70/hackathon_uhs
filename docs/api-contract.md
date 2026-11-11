@@ -3,7 +3,7 @@
 ## 1. 핵심 개념
 
 모바일 앱은 서버에 옷과 기기를 등록하고, 새 요청으로 목록을 다시 읽어 화면을 복원합니다.
-AI·계획 기능은 같은 `/api` 경로와 공통 오류 형식을 사용하지만, 이번 1단계에서는 계약만 작성된 경로가 있습니다.
+사진 분석과 제품 조회는 `ENABLE_AI_ROUTER=true`일 때 공용 API에서 사용할 수 있습니다. 세탁 계획과 설정 적합성 판정은 계약 단계입니다.
 
 ## 2. 공통 규칙
 
@@ -226,78 +226,58 @@ AI·계획 기능은 같은 `/api` 경로와 공통 오류 형식을 사용하�
 
 ## 4. 계약만 작성된 후속 API
 
-아래 경로는 이번 단계에서 실제 라우터를 제공하지 않습니다. 호출하면 일반 404가 발생할 수 있습니다.
+사진 분석과 제품 조회는 연결된 DB의 검증 카탈로그를 사용합니다.
 
-### 4.1 AI 라벨 분석
+### 4.1 의류·세탁 라벨 사진 분석
 
-`POST /api/analyze` — **계약만 작성, 유상진 님 구현 예정**
+`POST /api/analyze`
 
-요청 형식은 `multipart/form-data` 초안입니다.
+요청 형식은 `multipart/form-data`입니다.
 
 | 필드 | 형식 | 필수 | 설명 |
 | --- | --- | --- | --- |
-| `image` | file | 예 | 의류 라벨 또는 제품 이미지 |
-| `request_id` | string | 예 | 늦게 도착한 과거 응답 구분 |
-| `input_version` | integer | 예 | 현재 입력 버전 |
+| `image` | file | 예 | JPEG, PNG 또는 WebP, 최대 40 MiB |
+| `image_type` | string | 아니요 | `auto`(기본값), `garment`, `care_label` |
+
+라벨 분석 응답의 주요 필드 예시입니다.
 
 ```json
 {
-  "request_id": "analysis-123",
-  "input_version": 2,
-  "extracted": {
-    "material": "cotton",
-    "care_temperature_celsius": 30
-  },
-  "needs_confirmation": ["care_spin_level"],
-  "sources": [
-    {
-      "field": "care_temperature_celsius",
-      "source_type": "photo_inference",
-      "verification_status": "unconfirmed"
+  "image_type": "care_label",
+  "status": "analyzed",
+  "care_label": {
+    "max_wash_temperature_c": {
+      "value": 30,
+      "source": "care_label",
+      "status": "read_from_label",
+      "evidence": "30"
     }
-  ]
+  },
+  "care_guidance": ["라벨에 표시된 최대 세탁 온도는 30°C예요."],
+  "care_guidance_source": "care_label",
+  "photo_request": null,
+  "message": "라벨에서 읽은 세탁·건조 방법이에요."
 }
 ```
+
+의류 사진에서 동일 상품이 확인되면 `product_lookup.product`에 상품과 출처 URL, `product_care`에 확인된 관리 정보가 포함됩니다. 추가 사진이 필요하면 `photo_request.image_type`과 `photo_request.instructions`를 화면에 표시합니다.
 
 ### 4.2 제품 매칭
 
-`POST /api/products/match` — **계약만 작성, AI 검색은 유상진 님 구현 예정**
+`POST /api/products/match`는 품번 또는 공식 상품 URL을 입력받습니다.
 
 ```json
 {
-  "request_id": "match-123",
-  "input_version": 1,
-  "brand": "브랜드",
-  "product_name": "제품명",
-  "image_reference": "업로드 결과 식별자"
+  "brand": "Nike",
+  "product_code": "IX1937-001"
 }
 ```
 
-응답 `status`는 `exact_match`, `similar_candidates`, `no_result`, `lookup_error` 중 하나입니다. `exact_match`와 후보에는 `product_id`, 제품명, 출처 URL, 확인 상태가 포함되어야 합니다. 서버는 입력의 `request_id`, `input_version`을 그대로 돌려줍니다.
+응답 `status`는 `matched`, `candidates`, `not_found`, `search_unavailable` 중 하나입니다. `matched`일 때 `product.id`, `product.name`, `product.source_url`로 확인된 상품을 읽습니다. 앱의 사진 분석 화면은 `POST /api/analyze`를 사용합니다.
 
 ### 4.3 제품별 관리 정보
 
-`GET /api/products/{id}/care` — **계약만 작성**
-
-```json
-{
-  "product_id": "제품 UUID",
-  "product_key": "brand/product-key",
-  "brand": "브랜드",
-  "product_name": "제품명",
-  "care_instructions": [
-    {
-      "field_name": "wash_temperature_celsius",
-      "value_text": "30",
-      "source_type": "official_product_information",
-      "source_url": "https://공식-출처.example/care",
-      "verification_status": "confirmed"
-    }
-  ]
-}
-```
-
-DB 모델과 시드 로더는 구현되었지만 이 읽기 API는 아직 등록하지 않았습니다.
+`GET /api/products/{product_id}/care`는 매칭 응답의 `product.id`를 받습니다. `product`, `product_care`, `care_guidance`, `photo_request`를 반환합니다. `product_care`의 각 항목에는 `value`, `source`, `status`, `evidence`가 있습니다.
 
 ### 4.4 세탁 계획 생성
 
@@ -365,7 +345,7 @@ DB 모델과 시드 로더는 구현되었지만 이 읽기 API는 아직 등록
 - AI 담당 파일: `backend/app/ai/`, `backend/tests/ai/`, `backend/seed/verified/`
 - 제공할 모듈: `backend.app.ai.router`
 - 제공할 객체: 모듈 수준의 FastAPI `APIRouter`인 `router`
-- AI 라우터 내부 경로: `/analyze`, `/products/match`처럼 `/api`를 제외하고 정의합니다.
+- AI 라우터는 `/api` 접두사와 `/analyze`, `/products/match` 등의 경로를 제공합니다.
 - 공용 앱은 `ENABLE_AI_ROUTER=true`일 때 AI `router`를 `/api` 아래에 연결합니다.
 - AI 모듈 내부 의존성 import가 실패하면 공용 앱이 오류를 숨기지 않습니다.
 - 공용 DB 모델 import: `backend.app.db.models`

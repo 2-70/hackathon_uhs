@@ -4,15 +4,14 @@ import { router, useLocalSearchParams } from 'expo-router';
 import { useRef, useState, type ReactNode } from 'react';
 import { Image, Linking, Platform, Pressable, StyleSheet, Text, View, type TextInputInstance } from 'react-native';
 
-import { analyzePhoto, blankGarment } from '../src/mock';
+import { analyzePhoto, type Analysis, type PhotoKind, type UploadPhoto } from '../src/analysis';
+import { blankGarment } from '../src/mock';
 import type { Garment, GarmentDraft } from '../src/model';
 import { basketLimit, useLaundry } from '../src/store';
 import { Button, Field, Notice, Screen, palette, styles } from '../src/ui';
 
-type PhotoKind = 'clothing' | 'label';
 type EntryMode = PhotoKind | 'details';
 type InvalidField = 'name' | 'temperature';
-type Analysis = Awaited<ReturnType<typeof analyzePhoto>>;
 
 const entryModes = [
   { id: 'clothing', title: '의류 사진', icon: 'shirt-outline' },
@@ -37,9 +36,11 @@ const careSources: Record<GarmentDraft['source'], string> = {
   manual: '직접 입력',
   'sample-label': '세탁 라벨 샘플',
   'sample-product': '상품 관리정보 샘플',
+  'care-label': '실물 세탁 라벨',
+  'official-product': '공식 상품 정보',
 };
 
-const photoOptions: ImagePicker.ImagePickerOptions = { mediaTypes: ['images'], quality: 0.8 };
+const photoOptions: ImagePicker.ImagePickerOptions = { mediaTypes: ['images'], quality: 1 };
 const washOptions: { value: GarmentDraft['wash']; label: string }[] = [
   { value: 'machine', label: '기계 세탁' },
   { value: 'hand', label: '손세탁' },
@@ -51,12 +52,16 @@ const dryerOptions: { value: GarmentDraft['dryer']; label: string }[] = [
   { value: 'no', label: '사용 금지' },
   { value: 'unknown', label: '확인 필요' },
 ];
+const cycleOptions: { value: 'gentle' | 'normal' | 'unknown'; label: string }[] = [
+  { value: 'gentle', label: '약한 세탁' },
+  { value: 'normal', label: '일반 세탁' },
+  { value: 'unknown', label: '확인 필요' },
+];
 
 const resultLabels: Record<Analysis['status'], string> = {
-  exact: '동일 제품 확인 예시',
-  candidate: '유사 제품 후보',
-  'not-found': '제품을 찾지 못했어요',
-  label: '세탁 라벨 판독 예시',
+  exact: '동일 상품 확인',
+  'needs-confirmation': '추가 확인이 필요해요',
+  label: '세탁 라벨 판독',
 };
 
 export default function GarmentScreen() {
@@ -92,6 +97,7 @@ function GarmentEditor({ existing }: { existing?: Garment }) {
   const [maxTemp, setMaxTemp] = useState(draft.maxTemp === null ? '' : String(draft.maxTemp));
   const [mode, setMode] = useState<EntryMode>(existing ? 'details' : 'clothing');
   const [labelPhoto, setLabelPhoto] = useState<string>();
+  const [uploads, setUploads] = useState<Partial<Record<PhotoKind, UploadPhoto>>>({});
   const [results, setResults] = useState<Partial<Record<PhotoKind, Analysis>>>({});
   const [analysisErrors, setAnalysisErrors] = useState<Partial<Record<PhotoKind, string>>>({});
   const [busy, setBusy] = useState('');
@@ -131,7 +137,9 @@ function GarmentEditor({ existing }: { existing?: Garment }) {
         : await ImagePicker.launchImageLibraryAsync(photoOptions);
       if (result.canceled) return;
 
-      const uri = result.assets[0].uri;
+      const asset = result.assets[0];
+      const { uri } = asset;
+      setUploads((previous) => ({ ...previous, [kind]: asset }));
       if (kind === 'clothing') {
         updateDraft({ photo: uri });
       } else {
@@ -153,12 +161,12 @@ function GarmentEditor({ existing }: { existing?: Garment }) {
     setBusy(kind);
     setAnalysisErrors((previous) => ({ ...previous, [kind]: undefined }));
     try {
-      const result = await analyzePhoto(kind, uri);
+      const result = await analyzePhoto(kind, uploads[kind] ?? { uri }, Platform.OS === 'web');
       setResults((previous) => ({ ...previous, [kind]: result }));
-    } catch {
+    } catch (error) {
       setAnalysisErrors((previous) => ({
         ...previous,
-        [kind]: '사진을 분석하지 못했어요. 같은 사진으로 다시 시도할 수 있어요.',
+        [kind]: error instanceof Error ? error.message : '사진을 분석하지 못했어요. 다시 시도해 주세요.',
       }));
     } finally {
       inProgress.current = false;
@@ -166,15 +174,32 @@ function GarmentEditor({ existing }: { existing?: Garment }) {
     }
   }
 
-  function applyResult(kind: PhotoKind, analysis: Analysis) {
-    const { care } = analysis;
-    if (care.maxTemp !== undefined) setMaxTemp(care.maxTemp === null ? '' : String(care.maxTemp));
+  function rememberIdentity({ care }: Analysis) {
     setDraft((previous) => ({
       ...previous,
-      ...care,
-      name: previous.name || care.name || '',
-      photo: previous.photo,
-      source: kind === 'label' ? 'sample-label' : 'sample-product',
+      name: previous.name || care.name || care.category || '',
+      category: previous.category || care.category || '',
+      color: previous.color || care.color || '',
+    }));
+  }
+
+  function applyResult(analysis: Analysis) {
+    const { care } = analysis;
+    setMaxTemp(care.maxTemp == null ? '' : String(care.maxTemp));
+    setDraft((previous) => ({
+      ...previous,
+      name: previous.name || care.name || care.category || '',
+      category: previous.category || care.category || '',
+      color: previous.color || care.color || '',
+      material: care.material ?? '',
+      wash: care.wash ?? 'unknown',
+      maxTemp: care.maxTemp ?? null,
+      gentle: care.gentle ?? null,
+      dryer: care.dryer ?? 'unknown',
+      drying: care.drying ?? '',
+      careNotes: care.careNotes,
+      source: care.source ?? 'manual',
+      sourceReference: care.sourceReference,
     }));
     setFormError('');
     setFieldError(undefined);
@@ -192,7 +217,7 @@ function GarmentEditor({ existing }: { existing?: Garment }) {
       nameInput.current?.focus();
       return;
     }
-    if (requiresTemp && temperature && (!/^\d{1,2}$/.test(temperature) || Number(temperature) > 95)) {
+    if (requiresTemp && temperature && (!/^\d{1,3}$/.test(temperature) || Number(temperature) > 100)) {
       setFieldError('temperature');
       temperatureInput.current?.focus();
       return;
@@ -284,8 +309,15 @@ function GarmentEditor({ existing }: { existing?: Garment }) {
             onCamera={() => void choosePhoto(mode, true)}
             onLibrary={() => void choosePhoto(mode, false)}
             onAnalyze={() => photo && void analyze(mode, photo)}
-            onApply={(result) => applyResult(mode, result)}
-            onNext={() => setMode(mode === 'clothing' ? 'label' : 'details')}
+            onApply={applyResult}
+            onNext={(result) => {
+              rememberIdentity(result);
+              if (result.followUp === mode) {
+                void choosePhoto(mode, false);
+                return;
+              }
+              setMode(result.followUp ?? 'details');
+            }}
           />
           {photo && (
             <Button tone="quiet" icon="arrow-forward-outline" disabled={Boolean(busy)} onPress={() => setMode('details')}>
@@ -352,15 +384,16 @@ function GarmentEditor({ existing }: { existing?: Garment }) {
                     if (fieldError === 'temperature') setFieldError(undefined);
                   }}
                 />
-                {fieldError === 'temperature' && <FieldError>0~95 사이의 정수로 입력해 주세요.</FieldError>}
+                {fieldError === 'temperature' && <FieldError>0~100 사이의 정수로 입력해 주세요.</FieldError>}
               </View>
             )}
             {draft.wash === 'machine' && (
-              <CheckRow
-                label="약한 세탁 필요"
-                checked={draft.gentle}
-                disabled={Boolean(busy)}
-                onPress={() => updateDraft({ gentle: !draft.gentle, source: 'manual' })}
+              <ChoiceGrid
+                label="세탁 강도"
+                options={cycleOptions}
+                value={draft.gentle === null ? 'unknown' : draft.gentle ? 'gentle' : 'normal'}
+                onSelect={(cycle) => updateDraft({ gentle: cycle === 'unknown' ? null : cycle === 'gentle', source: 'manual' })}
+                compact
               />
             )}
           </FormSection>
@@ -503,7 +536,7 @@ function PhotoEntry({
   onLibrary: () => void;
   onAnalyze: () => void;
   onApply: (result: Analysis) => void;
-  onNext: () => void;
+  onNext: (result: Analysis) => void;
 }) {
   const { title, icon, guide } = photoCopy[kind];
   const report = analyzing || error ? undefined : result;
@@ -511,7 +544,7 @@ function PhotoEntry({
     <View style={local.photoEntry}>
       {uri && report ? (
         <>
-          <PhotoStrip uri={uri} title={title} status="샘플 분석 완료">
+          <PhotoStrip uri={uri} title={title} status="분석 완료">
             <Button tone="quiet" disabled={busy} onPress={onAnalyze}>다시 분석</Button>
           </PhotoStrip>
           <AnalysisReport result={report} kind={kind} busy={busy} onApply={onApply} onNext={onNext} />
@@ -536,7 +569,7 @@ function PhotoEntry({
           {error ? <Notice tone="error">{error}</Notice> : null}
           {uri && (
             <Button icon="scan-outline" disabled={busy} onPress={onAnalyze}>
-              {analyzing ? '분석 중…' : error ? '분석 다시 시도' : '샘플 분석'}
+              {analyzing ? '분석 중…' : error ? '분석 다시 시도' : '사진 분석'}
             </Button>
           )}
         </>
@@ -555,7 +588,7 @@ function PhotoEntry({
       </View>
       <View style={local.privacy}>
         <Ionicons name="lock-closed-outline" size={13} color={palette.muted} />
-        <Text style={local.caption}>선택한 사진은 이 기기에서만 사용해요.</Text>
+        <Text style={local.caption}>분석을 누르면 선택한 사진을 WashWise 서버로 보내요.</Text>
       </View>
     </View>
   );
@@ -584,13 +617,19 @@ function AnalysisReport({ result, kind, busy, onApply, onNext }: {
   kind: PhotoKind;
   busy: boolean;
   onApply: (result: Analysis) => void;
-  onNext: () => void;
+  onNext: (result: Analysis) => void;
 }) {
   const { care } = result;
-  const reportTone = result.status === 'exact' || result.status === 'label'
-    ? palette.aqua
-    : result.status === 'candidate' ? palette.peach : palette.blush;
+  const nextLabel = result.followUp === 'label'
+    ? (kind === 'label' ? '라벨 사진 다시 선택' : '세탁 라벨 추가')
+    : result.followUp === 'clothing' ? '옷 사진 다시 선택' : '직접 입력';
+  const reportTone = result.status === 'needs-confirmation' ? palette.blush : palette.aqua;
   const rows = [
+    { label: '상품', value: care.name },
+    { label: '브랜드', value: result.brand },
+    { label: '종류', value: care.category },
+    { label: '색상', value: care.color },
+    { label: '무늬', value: result.pattern },
     { label: '소재', value: care.material },
     { label: '세탁', value: washOptions.find(({ value }) => value === care.wash)?.label },
     { label: '최대 세탁 온도', value: typeof care.maxTemp === 'number' ? `${care.maxTemp}°C` : undefined },
@@ -603,7 +642,13 @@ function AnalysisReport({ result, kind, busy, onApply, onNext }: {
       <View style={local.reportHeading} accessibilityLiveRegion="polite">
         <View style={local.reportIcon}><Ionicons name="scan-outline" size={23} color={palette.accent} /></View>
         <Text accessibilityRole="header" style={local.reportTitle}>{resultLabels[result.status]}</Text>
-        {result.source ? <Text style={local.caption}>출처 · {result.source}</Text> : null}
+        {result.status === 'needs-confirmation' && rows.length > 0 && <Text style={local.caption}>의류 사진에서 추정한 정보</Text>}
+        {result.status === 'label' && <Text style={local.caption}>출처 · 실물 세탁 라벨</Text>}
+        {result.sourceUrl && (
+          <Button tone="quiet" icon="open-outline" onPress={() => void Linking.openURL(result.sourceUrl!).catch(() => {})}>
+            공식 상품 출처 보기
+          </Button>
+        )}
       </View>
       {rows.length > 0 && (
         <View style={local.reportRows}>
@@ -615,19 +660,20 @@ function AnalysisReport({ result, kind, busy, onApply, onNext }: {
           ))}
         </View>
       )}
-      {result.pending.length > 0 && (
-        <View style={local.reportPending}>
-          <Text style={local.fieldLabel}>확인 필요</Text>
-          <Text style={styles.body}>{result.pending.join(' · ')}</Text>
-        </View>
+      <View style={local.reportPending}>
+        {result.guidance.map((line, index) => <Text key={index} style={styles.body}>{line}</Text>)}
+        <Text style={styles.body}>{result.message}</Text>
+      </View>
+      {(result.followUp || !canApply) && (
+        <Button icon="arrow-forward-outline" disabled={busy} onPress={() => onNext(result)}>
+          {nextLabel}
+        </Button>
       )}
-      <Button
-        icon={canApply ? 'checkmark-outline' : 'arrow-forward-outline'}
-        disabled={busy}
-        onPress={canApply ? () => onApply(result) : onNext}
-      >
-        {canApply ? '샘플 관리정보 적용' : kind === 'clothing' ? '세탁 라벨 추가' : '직접 입력'}
-      </Button>
+      {canApply && (
+        <Button tone={result.followUp ? 'secondary' : 'primary'} icon="checkmark-outline" disabled={busy} onPress={() => onApply(result)}>
+          확인된 세탁 정보 적용
+        </Button>
+      )}
     </View>
   );
 }

@@ -51,3 +51,10 @@ test('settings validation accepts a valid alternative and reports conflicts', as
   assert.ok(tooHot.reasons.some((reason) => reason.includes('약한 세탁')));
   assert.equal((await validateSettings(group, machine, '', 30, 400)).status, 'unknown');
 });
+
+test('a known wash temperature does not imply that a normal cycle is allowed', async () => {
+  const garment = { ...sampleGarments[0], gentle: null };
+  const plan = await calculatePlan([garment], sampleMachines[0]);
+  assert.deepEqual(plan.groups, []);
+  assert.deepEqual(plan.excluded, [{ garment, reason: '약한 세탁이 필요한지 확인해 주세요.' }]);
+});

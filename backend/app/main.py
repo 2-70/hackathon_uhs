@@ -88,12 +88,13 @@ async def handle_http_error(_: Request, exc: HTTPException) -> JSONResponse:
     """FastAPI 기본 HTTP 오류도 같은 응답 형식으로 통일합니다."""
 
     # 프레임워크 기본 detail을 공개하되 내부 예외는 이 핸들러까지 오지 않습니다.
+    detail = exc.detail if isinstance(exc.detail, dict) else {}
     return JSONResponse(
         status_code=exc.status_code,
         content={
             "error": {
-                "code": "HTTP_ERROR",
-                "message": str(exc.detail),
+                "code": detail.get("code", "HTTP_ERROR"),
+                "message": detail.get("message", str(exc.detail)),
                 "details": None,
             }
         },

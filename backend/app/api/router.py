@@ -56,4 +56,8 @@ def include_optional_ai_router(app: FastAPI) -> None:
         # 규약을 지키지 않은 모듈은 서버 시작 전에 명확히 알립니다.
         raise RuntimeError("backend.app.ai.router.router가 필요합니다.")
     # AI 경로도 공용 API의 `/api` 접두사를 사용하도록 연결합니다.
-    app.include_router(ai_router, prefix="/api")
+    app.include_router(ai_router, prefix="" if ai_router.prefix == "/api" else "/api")
+    from backend.app.ai.catalog import get_catalog
+    from backend.app.api.catalog import get_db_catalog
+
+    app.dependency_overrides[get_catalog] = get_db_catalog

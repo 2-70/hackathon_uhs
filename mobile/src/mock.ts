@@ -7,7 +7,7 @@ export const blankGarment: GarmentDraft = {
   material: '',
   wash: 'unknown',
   maxTemp: null,
-  gentle: false,
+  gentle: null,
   dryer: 'unknown',
   drying: '',
   source: 'manual',
@@ -23,6 +23,7 @@ export const sampleGarments: Garment[] = [
     material: '면 100%',
     wash: 'machine',
     maxTemp: 40,
+    gentle: false,
     dryer: 'yes',
     drying: '낮은 온도로 건조하거나 걸어서 말리세요.',
     source: 'sample-product',
@@ -50,6 +51,7 @@ export const sampleGarments: Garment[] = [
     material: '면 98%, 폴리우레탄 2%',
     wash: 'machine',
     maxTemp: 30,
+    gentle: false,
     dryer: 'no',
     drying: '뒤집어서 그늘에 걸어 말리세요.',
     source: 'sample-label',
@@ -190,6 +192,7 @@ function getExclusionReason(garment: Garment): string | undefined {
   if (garment.wash === 'hand') return '손세탁이 필요한 의류예요.';
   if (garment.wash === 'unknown') return '기계세탁 가능 여부를 확인해 주세요.';
   if (garment.maxTemp === null) return '최대 세탁 온도를 확인해 주세요.';
+  if (garment.gentle === null) return '약한 세탁이 필요한지 확인해 주세요.';
   return undefined;
 }
 

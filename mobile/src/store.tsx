@@ -3,17 +3,18 @@ import * as FileSystem from 'expo-file-system/legacy';
 import {
   createContext, useContext, useEffect, useRef, useState, type ReactNode,
 } from 'react';
-import { sampleGarments, sampleMachines } from './mock';
+import {
+  deleteGarment, listWardrobe, readRegisteredMachine, writeGarment, writeRegisteredMachine,
+} from './api';
 import type { Garment, GarmentDraft, Machine } from './model';
 
-const storageKey = 'washwise.sample.v1';
+const photoStorageKey = 'washwise.local-photos.v1';
 export const basketLimit = 10;
 
-type SavedData = { garments: Garment[]; machineId: string | null };
+type SavedData = { garments: Garment[]; machine: Machine | null };
 type Laundry = SavedData & {
   ready: boolean;
   loadError: string | null;
-  machine: Machine | null;
   basketIds: string[];
   analysisStarted: boolean;
   startAnalysis: () => void;
@@ -24,7 +25,7 @@ type Laundry = SavedData & {
   registerMachine: (machine: Machine) => Promise<void>;
 };
 
-const initialData: SavedData = { garments: sampleGarments, machineId: null };
+const initialData: SavedData = { garments: [], machine: null };
 const LaundryContext = createContext<Laundry | null>(null);
 const photoDirectory = FileSystem.documentDirectory && FileSystem.documentDirectory + 'washwise-photos/';
 
@@ -61,14 +62,21 @@ export function LaundryProvider({ children }: { children: ReactNode }) {
     let active = true;
     async function load() {
       try {
-        const raw = await AsyncStorage.getItem(storageKey);
-        if (!active || raw === null) return;
-        const stored = JSON.parse(raw) as SavedData;
-        if (!Array.isArray(stored.garments)) throw new Error('Invalid saved wardrobe');
-        current.current = stored;
-        setData(stored);
+        const [garments, machine, rawPhotos] = await Promise.all([
+          listWardrobe(), readRegisteredMachine(), AsyncStorage.getItem(photoStorageKey).catch(() => null),
+        ]);
+        if (!active) return;
+        let photos: Record<string, string> = {};
+        try {
+          if (rawPhotos) photos = JSON.parse(rawPhotos);
+        } catch {
+          // Photos are device-local; a damaged reference does not hide the server wardrobe.
+        }
+        const loaded = { garments: garments.map((item) => ({ ...item, photo: photos[item.id] })), machine };
+        current.current = loaded;
+        setData(loaded);
       } catch {
-        if (active) setLoadError('저장한 옷장을 불러오지 못했습니다. 앱을 다시 열어 주세요.');
+        if (active) setLoadError('서버에서 옷장과 세탁기를 불러오지 못했어요. 연결을 확인한 뒤 다시 열어 주세요.');
       } finally {
         if (active) setReady(true);
       }
@@ -84,10 +92,17 @@ export function LaundryProvider({ children }: { children: ReactNode }) {
     return pending;
   }
 
-  async function commit(next: SavedData) {
-    await AsyncStorage.setItem(storageKey, JSON.stringify(next));
+  function commit(next: SavedData) {
     current.current = next;
     setData(next);
+  }
+
+  async function keepPhotoReferences(garments: Garment[]) {
+    const photos = Object.fromEntries(
+      garments.filter((item) => item.photo && !item.photo.startsWith('data:'))
+        .map((item) => [item.id, item.photo]),
+    );
+    await AsyncStorage.setItem(photoStorageKey, JSON.stringify(photos)).catch(() => {});
   }
 
   function saveGarment(draft: GarmentDraft, id?: string) {
@@ -95,17 +110,18 @@ export function LaundryProvider({ children }: { children: ReactNode }) {
       const previous = current.current.garments.find((garment) => garment.id === id);
       if (id && !previous) throw new Error('Garment not found');
       const photo = await keepPhoto(draft.photo);
-      const saved: Garment = { ...draft, id: previous?.id ?? createId(), photo };
-      const garments = previous
-        ? current.current.garments.map((garment) => garment.id === id ? saved : garment)
-        : [saved, ...current.current.garments];
-
+      let saved: Garment;
       try {
-        await commit({ ...current.current, garments });
+        saved = { ...await writeGarment(draft, id), photo };
       } catch (error) {
         if (photo !== draft.photo) await discardPhoto(photo);
         throw error;
       }
+      const garments = previous
+        ? current.current.garments.map((garment) => garment.id === id ? saved : garment)
+        : [saved, ...current.current.garments];
+      commit({ ...current.current, garments });
+      await keepPhotoReferences(garments);
       if (previous?.photo !== photo) await discardPhoto(previous?.photo);
       return saved;
     });
@@ -123,10 +139,10 @@ export function LaundryProvider({ children }: { children: ReactNode }) {
   function removeGarment(id: string) {
     return enqueue(async () => {
       const previous = current.current.garments.find((garment) => garment.id === id);
-      await commit({
-        ...current.current,
-        garments: current.current.garments.filter((garment) => garment.id !== id),
-      });
+      await deleteGarment(id);
+      const garments = current.current.garments.filter((garment) => garment.id !== id);
+      commit({ ...current.current, garments });
+      await keepPhotoReferences(garments);
       removeFromBasket(id);
       await discardPhoto(previous?.photo);
     });
@@ -140,13 +156,16 @@ export function LaundryProvider({ children }: { children: ReactNode }) {
   }
 
   function registerMachine(machine: Machine) {
-    return enqueue(() => commit({ ...current.current, machineId: machine.id }));
+    return enqueue(async () => {
+      if (current.current.machine?.id === machine.id) return;
+      await writeRegisteredMachine(machine);
+      commit({ ...current.current, machine });
+    });
   }
 
   return (
     <LaundryContext.Provider value={{
       ...data, ready, loadError, basketIds, analysisStarted,
-      machine: sampleMachines.find((machine) => machine.id === data.machineId) ?? null,
       startAnalysis: () => setAnalysisStarted(true),
       addToBasket, removeFromBasket, saveGarment, removeGarment, registerMachine,
     }}>
