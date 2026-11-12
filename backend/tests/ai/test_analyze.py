@@ -355,7 +355,9 @@ def test_blurry_label_does_not_supply_unknown_settings(client, photo):
     assert result["status"] == "needs_confirmation"
     assert result["care_label"]["max_wash_temperature_c"]["value"] is None
     assert result["care_label"]["max_wash_temperature_c"]["status"] == "needs_confirmation"
-    assert result["care_guidance"] == []
+    # Only fibre-based tips remain; nothing is attributed to the label itself.
+    assert all(line.startswith("소재 기준 권장: ") for line in result["care_guidance"])
+    assert result["care_guidance_source"] == "material_estimate"
     assert "capture_label" in result["next_actions"]
     assert "초점을 맞춘 뒤" in result["photo_request"]["instructions"]
 

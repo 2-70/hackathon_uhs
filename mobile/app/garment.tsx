@@ -1,13 +1,16 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
 import * as ImagePicker from 'expo-image-picker';
 import { router, useLocalSearchParams } from 'expo-router';
-import { useRef, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Image, Linking, Platform, Pressable, StyleSheet, Text, useWindowDimensions, View, type TextInputInstance } from 'react-native';
 
-import { analyzePhoto, parseMaterialGuidance, type Analysis, type PhotoKind, type UploadPhoto } from '../src/analysis';
+import { analyzePhoto, careSummary, messageWithoutFollowUp, parseMaterialGuidance, splitGuidance, type Analysis, type PhotoKind, type UploadPhoto } from '../src/analysis';
 import { blankGarment } from '../src/mock';
 import type { Garment, GarmentDraft, GarmentPhotos } from '../src/model';
+import { LaundryLoading } from '../src/LaundryLoading';
+import { MachineGuideBody } from '../src/machine-usage';
 import { basketLimit, useLaundry } from '../src/store';
+import { machineGuide } from '../src/together';
 import { Button, Field, Notice, Screen, ScreenHeader, palette, styles } from '../src/ui';
 
 type EntryMode = PhotoKind | 'details';
@@ -132,6 +135,12 @@ function GarmentEditor({ existing }: { existing?: Garment }) {
   const savedId = useRef(existing?.id);
   const nameInput = useRef<TextInputInstance>(null);
   const temperatureInput = useRef<TextInputInstance>(null);
+  const pendingFocus = useRef<InvalidField | undefined>(undefined);
+  useEffect(() => {
+    const field = pendingFocus.current;
+    pendingFocus.current = undefined;
+    if (mode === 'details' && field) (field === 'name' ? nameInput : temperatureInput).current?.focus();
+  }, [mode]);
   const photo = mode === 'clothing' ? uploads.clothing?.uri ?? draft.photo : draft.labelPhoto;
   const balancePhotoLayout = mode !== 'details' && !photo && !photoError && !cameraDenied;
   const photoTopOffset = balancePhotoLayout
@@ -219,43 +228,41 @@ function GarmentEditor({ existing }: { existing?: Garment }) {
   function applyResult(analysis: Analysis) {
     const { care } = analysis;
     setMaxTemp(care.maxTemp == null ? '' : String(care.maxTemp));
-    setDraft((previous) => ({
-      ...previous,
-      name: previous.name || care.name || care.category || '',
-      category: previous.category || care.category || '',
-      color: previous.color || care.color || '',
-      material: care.material ?? '',
-      wash: care.wash ?? 'unknown',
-      maxTemp: care.maxTemp ?? null,
-      gentle: care.gentle ?? null,
-      washStrength: care.washStrength ?? null,
-      maxSpin: care.maxSpin ?? null,
-      dryer: care.dryer ?? 'unknown',
-      drying: care.drying ?? '',
-      careNotes: care.careNotes,
-      source: care.source ?? 'manual',
-      sourceReference: care.sourceReference,
-    }));
+    setDraft((previous) => applyCare(previous, care));
     setFormError('');
     setFieldError(undefined);
     setMode('details');
   }
 
-  async function save(add: boolean) {
+  /** 분석 결과를 적용해 바로 저장한다. 저장할 수 없는 값이면 직접 입력 화면에서 고치게 한다. */
+  async function saveAnalysis(analysis: Analysis) {
+    const next = applyCare(draft, analysis.care);
+    const temperature = analysis.care.maxTemp == null ? '' : String(analysis.care.maxTemp);
+    const invalid = await save(false, { draft: next, temperature });
+    if (invalid) {
+      applyResult(analysis);
+      setFieldError(invalid);
+      pendingFocus.current = invalid;
+    }
+  }
+
+  /** 저장하면 undefined, 검증에 걸리면 해당 입력칸을 돌려준다. */
+  async function save(add: boolean, explicit?: { draft: GarmentDraft; temperature: string }): Promise<InvalidField | undefined> {
     if (inProgress.current) return;
     setFormError('');
-    const name = draft.name.trim();
-    const temperature = maxTemp.trim();
-    const requiresTemp = draft.wash === 'machine' || draft.wash === 'hand';
+    const target = explicit?.draft ?? draft;
+    const name = target.name.trim();
+    const temperature = (explicit?.temperature ?? maxTemp).trim();
+    const requiresTemp = target.wash === 'machine' || target.wash === 'hand';
     if (!name) {
       setFieldError('name');
-      nameInput.current?.focus();
-      return;
+      if (!explicit) nameInput.current?.focus();
+      return 'name';
     }
     if (requiresTemp && temperature && (!/^\d{1,3}$/.test(temperature) || Number(temperature) > 100)) {
       setFieldError('temperature');
-      temperatureInput.current?.focus();
-      return;
+      if (!explicit) temperatureInput.current?.focus();
+      return 'temperature';
     }
     setFieldError(undefined);
     if (add && basketIds.length >= basketLimit) {
@@ -267,19 +274,19 @@ function GarmentEditor({ existing }: { existing?: Garment }) {
     setBusy('save');
     try {
       const photos: GarmentPhotos = {};
-      const clothing = [originalPhoto, uploads.clothing].find((photo) => photo?.uri === draft.photo && photo?.base64);
+      const clothing = [originalPhoto, uploads.clothing].find((photo) => photo?.uri === target.photo && photo?.base64);
       if (clothing?.base64) photos.clothing = clothing.base64;
       if (uploads.label?.base64) photos.label = uploads.label.base64;
       if (Object.values(photos).some((value) => value.length > 16 * 1024 * 1024)) {
         throw new Error('사진 한 장당 12MB 이하로 다시 선택해 주세요.');
       }
       const garment = await saveGarment({
-        ...draft,
+        ...target,
         name,
-        category: draft.category.trim(),
-        color: draft.color.trim(),
-        material: draft.material.trim(),
-        drying: draft.drying.trim(),
+        category: target.category.trim(),
+        color: target.color.trim(),
+        material: target.material.trim(),
+        drying: target.drying.trim(),
         maxTemp: requiresTemp && temperature ? Number(temperature) : null,
       }, savedId.current, Object.keys(photos).length ? photos : undefined);
       savedId.current = garment.id;
@@ -357,13 +364,15 @@ function GarmentEditor({ existing }: { existing?: Garment }) {
             kind={mode}
             uri={photo}
             busy={Boolean(busy)}
+            saving={busy === 'save'}
             analyzing={busy === mode}
             result={results[mode]}
+            recommendation={results[mode] && <MachineRecommendation care={applyCare(draft, results[mode].care)} />}
             error={analysisErrors[mode]}
             onCamera={() => void choosePhoto(mode, true)}
             onLibrary={() => void choosePhoto(mode, false)}
             onAnalyze={() => photo && void analyze(mode, photo)}
-            onApply={applyResult}
+            onApply={(result) => void saveAnalysis(result)}
             onNext={(result) => {
               rememberIdentity(result);
               if (result.followUp === mode) {
@@ -373,6 +382,7 @@ function GarmentEditor({ existing }: { existing?: Garment }) {
               setMode(result.followUp ?? 'details');
             }}
           />
+          {formError ? <Notice tone="error">{formError}</Notice> : null}
           {photo && (
             <Button tone="quiet" icon="arrow-forward-outline" disabled={Boolean(busy)} onPress={() => {
               const result = results[mode];
@@ -382,7 +392,7 @@ function GarmentEditor({ existing }: { existing?: Garment }) {
                 setMode('details');
               }
             }}>
-              옷 정보 입력
+              {results[mode] && results[mode].status !== 'needs-confirmation' ? '저장 전에 정보 수정' : '옷 정보 입력'}
             </Button>
           )}
         </View>
@@ -484,6 +494,11 @@ function GarmentEditor({ existing }: { existing?: Garment }) {
             />
           </FormSection>
 
+          <MachineRecommendation care={{
+            ...draft,
+            maxTemp: /^\d{1,3}$/.test(maxTemp.trim()) && Number(maxTemp) <= 100 ? Number(maxTemp) : null,
+          }} />
+
           <View style={local.saveArea}>
             {!existing && (
               <CheckRow
@@ -504,6 +519,55 @@ function GarmentEditor({ existing }: { existing?: Garment }) {
         </View>
       )}
     </Screen>
+  );
+}
+
+/** 분석 결과의 세탁 정보를 옷 정보에 합친 새 값. */
+function applyCare(draft: GarmentDraft, care: Analysis['care']): GarmentDraft {
+  return {
+    ...draft,
+    name: draft.name || care.name || care.category || '',
+    category: draft.category || care.category || '',
+    color: draft.color || care.color || '',
+    material: care.material ?? '',
+    wash: care.wash ?? 'unknown',
+    maxTemp: care.maxTemp ?? null,
+    gentle: care.gentle ?? null,
+    washStrength: care.washStrength ?? null,
+    maxSpin: care.maxSpin ?? null,
+    dryer: care.dryer ?? 'unknown',
+    drying: care.drying ?? '',
+    careNotes: care.careNotes,
+    source: care.source ?? 'manual',
+    sourceReference: care.sourceReference,
+  };
+}
+
+function MachineRecommendation({ care }: { care: GarmentDraft }) {
+  const { machine } = useLaundry();
+  const guide = machine && care.wash === 'machine' ? machineGuide([{ ...care, id: 'draft' }], machine) : null;
+  let body: ReactNode;
+  if (!machine) {
+    body = (
+      <>
+        <Text style={styles.muted}>세탁기를 등록하면 내 세탁기에 맞는 코스를 추천해 드려요.</Text>
+        <Button tone="quiet" icon="options-outline" onPress={() => router.navigate('/machines')}>세탁기 등록하기</Button>
+      </>
+    );
+  } else if (care.wash === 'none' || care.wash === 'hand') {
+    return null;
+  } else if (care.wash === 'unknown') {
+    body = <Text style={styles.muted}>기계세탁 가능 여부를 라벨에서 확인하면 코스를 추천해 드려요.</Text>;
+  } else if (!guide) {
+    body = <Text style={styles.muted}>이 세탁기에서 옷에 맞는 확인된 설정을 찾지 못했어요. 라벨과 설명서를 확인해 주세요.</Text>;
+  } else {
+    body = <MachineGuideBody machine={machine} guide={guide} />;
+  }
+  return (
+    <View style={[styles.card, local.recommendation]}>
+      <Text accessibilityRole="header" style={styles.title}>내 세탁기 추천 코스</Text>
+      {body}
+    </View>
   );
 }
 
@@ -596,13 +660,15 @@ function CheckRow({ label, checked, disabled, onPress }: {
 }
 
 function PhotoEntry({
-  kind, uri, busy, analyzing, result, error, onCamera, onLibrary, onAnalyze, onApply, onNext,
+  kind, uri, busy, saving, analyzing, result, recommendation, error, onCamera, onLibrary, onAnalyze, onApply, onNext,
 }: {
   kind: PhotoKind;
   uri?: string;
   busy: boolean;
+  saving: boolean;
   analyzing: boolean;
   result?: Analysis;
+  recommendation?: ReactNode;
   error?: string;
   onCamera: () => void;
   onLibrary: () => void;
@@ -619,7 +685,8 @@ function PhotoEntry({
           <PhotoStrip uri={uri} title={title} status="분석 완료">
             <Button tone="quiet" disabled={busy} onPress={onAnalyze}>다시 분석</Button>
           </PhotoStrip>
-          <AnalysisReport result={report} kind={kind} busy={busy} onApply={onApply} onNext={onNext} />
+          <AnalysisReport result={report} kind={kind} busy={busy} saving={saving} onApply={onApply} onNext={onNext} />
+          {recommendation}
         </>
       ) : (
         <>
@@ -644,11 +711,13 @@ function PhotoEntry({
             )}
           </View>
           {error ? <Notice tone="error">{error}</Notice> : null}
-          {uri && (
+          {uri && analyzing ? (
+            <LaundryLoading label={kind === 'label' ? '세탁 라벨의 표시를 읽고 있어요.' : '옷의 종류와 관리 정보를 살펴보고 있어요.'} />
+          ) : uri ? (
             <Button icon="scan-outline" disabled={busy} onPress={onAnalyze}>
-              {analyzing ? '분석 중…' : error ? '분석 다시 시도' : '사진 분석'}
+              {error ? '분석 다시 시도' : '사진 분석'}
             </Button>
-          )}
+          ) : null}
         </>
       )}
       <PhotoControls selected={Boolean(uri)} busy={busy} onCamera={onCamera} onLibrary={onLibrary} />
@@ -702,10 +771,11 @@ function PhotoStrip({ uri, title, status, children }: {
   );
 }
 
-function AnalysisReport({ result, kind, busy, onApply, onNext }: {
+function AnalysisReport({ result, kind, busy, saving, onApply, onNext }: {
   result: Analysis;
   kind: PhotoKind;
   busy: boolean;
+  saving: boolean;
   onApply: (result: Analysis) => void;
   onNext: (result: Analysis) => void;
 }) {
@@ -715,15 +785,34 @@ function AnalysisReport({ result, kind, busy, onApply, onNext }: {
     ? (kind === 'label' ? '라벨 사진 다시 선택' : '세탁 라벨 촬영')
     : result.followUp === 'clothing' ? '추가 사진 선택' : '직접 입력';
   const reportTone = result.status === 'needs-confirmation' ? palette.lilac : palette.aqua;
-  const showsTips = result.status !== 'label' && Boolean(result.guidance.length || result.materialGuidance.length);
+  const showsTips = result.status === 'label'
+    ? result.materialGuidance.length > 0
+    : Boolean(result.guidance.length || result.materialGuidance.length);
+  const labelTips = result.status === 'label' && result.materialGuidance.length > 0;
   const noCareMessage = '세탁 정보를 확실하게 알 수 없어요. 세탁 라벨을 찍어주세요.';
   const materialLabelPrompt = '더 확실하게 알고 싶으면 세탁 라벨을 찍어주세요.';
-  const note = result.materialGuidance.length > 0
+  const canApply = result.status !== 'needs-confirmation';
+  const cells = result.status === 'label' ? careSummary(care, result.waterText) : [];
+  const bullets = splitGuidance(result.guidance);
+  const note = result.materialGuidance.length > 0 && !labelTips
     ? undefined
     : matchedWithoutCare ? noCareMessage
-      : showsTips ? result.followUp === 'label' ? result.followUpInstructions : undefined
-        : result.message;
-  const canApply = result.status !== 'needs-confirmation';
+      : bullets.length === 0 && cells.length === 0
+        ? messageWithoutFollowUp(result.message, result.followUpInstructions) || undefined
+        : undefined;
+  const followUpText = matchedWithoutCare || (result.materialGuidance.length > 0 && !labelTips) ? undefined
+    : result.status === 'exact' && !(showsTips && result.followUp === 'label') ? undefined
+      : result.followUpInstructions;
+  const applyButton = canApply && (
+    <Button icon="checkmark-outline" disabled={busy} onPress={() => onApply(result)}>
+      {saving ? '저장 중…' : '옷장에 저장'}
+    </Button>
+  );
+  const nextButton = (result.followUp || !canApply) && (
+    <Button tone={canApply ? 'secondary' : 'primary'} icon="arrow-forward-outline" disabled={busy} onPress={() => onNext(result)}>
+      {nextLabel}
+    </Button>
+  );
   return (
     <View style={[local.report, { backgroundColor: reportTone }]}>
       <View style={local.reportHeading} accessibilityLiveRegion="polite">
@@ -737,10 +826,23 @@ function AnalysisReport({ result, kind, busy, onApply, onNext }: {
         {care.material && <Text style={local.caption}>{care.material}</Text>}
       </View>
       <View style={local.reportPending}>
-        {showsTips && result.guidance.length > 0 && (
+        {cells.length > 0 && (
           <>
-            {result.status === 'exact' && <Text style={local.fieldLabel}>{result.sourceLabel}에서 확인한 안내</Text>}
-            {result.guidance.map((line) => <Text key={line} style={styles.body}>{line}</Text>)}
+            <Text style={local.fieldLabel}>읽은 정보</Text>
+            <View style={local.summaryCells}>
+              {cells.map(({ label, value }) => (
+                <View key={label} style={local.summaryCell} accessible accessibilityLabel={`${label} ${value}`}>
+                  <Text style={local.caption}>{label}</Text>
+                  <Text style={local.summaryValue}>{value}</Text>
+                </View>
+              ))}
+            </View>
+          </>
+        )}
+        {bullets.length > 0 && (
+          <>
+            <Text style={local.fieldLabel}>{result.status === 'exact' ? `${result.sourceLabel}에서 확인한 안내` : '관리 안내'}</Text>
+            {bullets.map((line, index) => <Text key={`${line}-${index}`} style={styles.body}>• {line}</Text>)}
           </>
         )}
         {showsTips && result.materialGuidance.length > 0 && (
@@ -762,26 +864,23 @@ function AnalysisReport({ result, kind, busy, onApply, onNext }: {
                 </View>
               );
             })}
-            <Text style={local.estimatedPrompt}>{materialLabelPrompt}</Text>
+            {kind !== 'label' && <Text style={local.estimatedPrompt}>{materialLabelPrompt}</Text>}
           </View>
         )}
         {note && <Text style={styles.body}>{note}</Text>}
+        {followUpText && (
+          <View style={local.estimatedPanel}>
+            <Text style={local.fieldLabel}>더 정확하게 읽으려면</Text>
+            <Text style={styles.body}>{followUpText}</Text>
+          </View>
+        )}
       </View>
       {result.sourceUrl && (
         <Button tone="quiet" icon="open-outline" onPress={() => void Linking.openURL(result.sourceUrl!).catch(() => {})}>
           {result.sourceLabel}
         </Button>
       )}
-      {(result.followUp || !canApply) && (
-        <Button icon="arrow-forward-outline" disabled={busy} onPress={() => onNext(result)}>
-          {nextLabel}
-        </Button>
-      )}
-      {canApply && (
-        <Button tone={result.followUp ? 'secondary' : 'primary'} icon="checkmark-outline" disabled={busy} onPress={() => onApply(result)}>
-          {matchedWithoutCare ? '상품 정보 적용' : '확인된 세탁 정보 적용'}
-        </Button>
-      )}
+      {canApply ? <>{applyButton}{nextButton}</> : nextButton}
     </View>
   );
 }
@@ -875,6 +974,7 @@ const local = StyleSheet.create({
     alignItems: 'center', justifyContent: 'center',
   },
   checkboxChecked: { backgroundColor: palette.accent, borderColor: palette.accent },
+  recommendation: { padding: 13, gap: 10 },
   saveArea: { gap: 8, padding: 10, borderRadius: 16, backgroundColor: palette.accentWash },
 
   report: { gap: 11, borderWidth: 1, borderColor: palette.line, borderRadius: 18, padding: 13 },
@@ -884,7 +984,10 @@ const local = StyleSheet.create({
     backgroundColor: palette.surface, borderRadius: 14, marginBottom: 2,
   },
   reportTitle: { color: palette.ink, fontSize: 19, fontWeight: '800', textAlign: 'center' },
-  reportPending: { backgroundColor: palette.surface, padding: 11, borderRadius: 12, gap: 4 },
+  reportPending: { backgroundColor: palette.surface, padding: 11, borderRadius: 12, gap: 8 },
+  summaryCells: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  summaryCell: { flexGrow: 1, flexBasis: 90, minWidth: 90, gap: 2, padding: 10, borderRadius: 12, borderWidth: 1, borderColor: palette.line, backgroundColor: palette.surface },
+  summaryValue: { color: palette.ink, fontSize: 15, lineHeight: 21, fontWeight: '800' },
   estimatedPanel: { gap: 7, padding: 11, borderRadius: 12, backgroundColor: palette.subtle },
   materialTip: { gap: 2, paddingBottom: 4 },
   materialTipLabeled: { flexDirection: 'row', alignItems: 'flex-start', gap: 8 },

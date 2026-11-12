@@ -9,6 +9,8 @@ export type Analysis = {
   care: Partial<GarmentDraft>;
   guidance: string[];
   materialGuidance: string[];
+  /** Worded water-temperature instruction read from the label (no number on the label). */
+  waterText?: string;
   estimated: boolean;
   hasPublishedCare: boolean;
   message: string;
@@ -62,6 +64,7 @@ export function toAnalysis(response: PhotoResponse): Analysis {
   const tumble = value('tumble_dry_allowed');
   const natural = text('natural_dry');
   const cycle = text('wash_cycle');
+  const waterText = text('wash_water');
   const category = response.garment.garment_type?.value;
   const color = response.garment.color?.value;
   const instructions = response.photo_request?.instructions;
@@ -108,14 +111,14 @@ export function toAnalysis(response: PhotoResponse): Analysis {
     dryer: typeof tumble === 'boolean' ? (tumble ? 'yes' : 'no') : undefined,
     drying: [natural ? naturalDrying[natural] : undefined, value('dry_in_shade') === true ? '그늘 건조' : undefined]
       .filter(Boolean).join(' · ') || undefined,
-    careNotes: guidanceIsConfirmed ? guidance.join(' ').slice(0, 500) || undefined : undefined,
+    careNotes: guidanceIsConfirmed ? guidance.join('\n').slice(0, 500) || undefined : undefined,
     source: product ? 'official-product' : hasLabelReadings ? 'care-label' : undefined,
     sourceReference: product?.source_url,
   };
 
   return {
     status: product ? 'exact' : hasLabelReadings ? 'label' : 'needs-confirmation',
-    care, guidance, materialGuidance, estimated, hasPublishedCare, searchNote, sourceUrl: product?.source_url,
+    care, guidance, materialGuidance, waterText, estimated, hasPublishedCare, searchNote, sourceUrl: product?.source_url,
     productCode: product?.product_code,
     sourceLabel,
     message: instructions && !response.message.includes(instructions)
@@ -141,4 +144,37 @@ export async function analyzePhoto(kind: PhotoKind, photo: UploadPhoto, isWeb: b
   form.append('image_type', kind === 'label' ? 'care_label' : 'auto');
   const response = await request<PhotoResponse>('/api/analyze', { method: 'POST', body: form }, 215000);
   return toAnalysis(response);
+}
+
+export type SummaryCell = { label: string; value: string };
+
+const washText = { machine: '기계 세탁', hand: '손세탁', none: '물세탁 금지' } as const;
+const strengthText = { normal: '일반', gentle: '약하게', very_gentle: '매우 약하게' } as const;
+
+/** Cells for the values that were actually read; unknown or missing values are omitted. */
+export function careSummary(care: Partial<GarmentDraft>, waterText?: string): SummaryCell[] {
+  const cells: SummaryCell[] = [];
+  const wash = care.wash && care.wash !== 'unknown' ? washText[care.wash] : undefined;
+  if (wash) cells.push({ label: '세탁 방법', value: wash });
+  if (typeof care.maxTemp === 'number') cells.push({ label: '최대 온도', value: `${care.maxTemp}°C` });
+  else if (waterText) cells.push({ label: '물 온도', value: waterText });
+  const strength = care.washStrength ? strengthText[care.washStrength]
+    : care.gentle === true ? '약하게' : care.gentle === false ? '일반' : undefined;
+  if (strength) cells.push({ label: '세탁 강도', value: strength });
+  if (care.dryer === 'yes' || care.dryer === 'no') {
+    cells.push({ label: '건조기', value: care.dryer === 'yes' ? '사용 가능' : '사용 금지' });
+  }
+  if (care.drying) cells.push({ label: '자연건조', value: care.drying });
+  return cells;
+}
+
+/** One bullet per sentence; only splits at sentence punctuation followed by a space. */
+export function splitGuidance(lines: string[]): string[] {
+  return lines.flatMap((line) => line.split(/(?<=[.!?。])\s+/)).map((line) => line.trim()).filter(Boolean);
+}
+
+/** Message text without the follow-up request that toAnalysis may have appended. */
+export function messageWithoutFollowUp(message: string, instructions?: string): string {
+  const text = instructions && message.endsWith(instructions) ? message.slice(0, -instructions.length) : message;
+  return text.trim();
 }

@@ -75,6 +75,7 @@ Read only visible care marks or instructions, including bleach, ironing and prof
 Use Korean for normalized care text. Put other actionable instructions in special_instructions without repeating fields.
 Only take wash temperature from a numeral in the wash tub or text that explicitly gives a Celsius washing limit.
 Quote that numeral in its evidence. Keep fiber percentages, iron settings, and wash temperature separate.
+If the label states water temperature only in words (for example 찬물, 미지근한 물, 미온수, 뜨거운 물 사용 금지, cold wash, warm water), put it in wash_water as one complete polite Korean sentence that keeps any prohibition, such as "찬물로 세탁하세요." or "뜨거운 물은 사용하지 마세요.", and quote the words in evidence. Do not repeat it in special_instructions. Never turn such words into max_wash_temperature_c or guess a number.
 A hand in the tub means hand wash. A crossed tub forbids washing. A square with a circle is tumble drying.
 Read drying lines separately. A crossed mark forbids its process. Record dryer heat only if allowed and marked.
 Use photo_issue for blur, glare, cropping, or a readable label missing care details.

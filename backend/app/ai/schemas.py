@@ -43,6 +43,7 @@ class LabelReadings(ExtractionModel):
     fiber_content: Reading[ShortText] | None = None
     wash_method: Reading[WashMethod] | None = None
     max_wash_temperature_c: Reading[Temperature] | None = None
+    wash_water: Reading[ShortText] | None = None
     wash_cycle: Reading[WashCycle] | None = None
     bleach: Reading[ShortText] | None = None
     tumble_dry_allowed: Reading[bool] | None = None

@@ -2,7 +2,7 @@ import Ionicons from '@expo/vector-icons/Ionicons';
 import { useRouter } from 'expo-router';
 import { useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Image, Pressable, StyleSheet, Text, View, type ScrollViewInstance } from 'react-native';
-import { MachineManual, ManualLink } from '../src/machine-usage';
+import { MachineGuideBody, MachineManual } from '../src/machine-usage';
 import type { Garment, Machine } from '../src/model';
 import { basketLimit, useLaundry } from '../src/store';
 import { checkLoadSetting, machineGuide, planTogether, type TogetherPlan } from '../src/together';
@@ -157,7 +157,7 @@ export default function Drum() {
           }
         }}>
           <TogetherDetails plan={together} machine={machine} />
-          <DryingDetails garments={selection} />
+          <DryingDetails garments={selection} notes={together.dryingNotes} />
           {!machine && together.loads.length > 0 && (
             <View style={[styles.card, drum.resultSection]}>
               <Text style={styles.body}>세탁기를 등록하면 그 모델의 코스·온도·탈수 설정까지 골라 드려요.</Text>
@@ -200,6 +200,8 @@ function LoadReadout({ count }: { count: number }) {
 function TogetherDetails({ plan, machine }: { plan: TogetherPlan; machine: Machine | null }) {
   const router = useRouter();
   const list = (items: Garment[]) => items.map(({ name }) => name).join(', ');
+  const selectedCount = plan.loads.reduce((sum, { garments }) => sum + garments.length, 0)
+    + plan.apart.length + plan.pending.length;
   const together = plan.loads.length === 1 && plan.loads[0].garments.length > 1
     && plan.apart.length === 0 && plan.pending.length === 0;
   const summary = together ? '선택한 옷을 한 묶음으로 세탁할 수 있어요.' : [
@@ -210,7 +212,7 @@ function TogetherDetails({ plan, machine }: { plan: TogetherPlan; machine: Machi
   return (
     <>
       <View style={drum.resultHeading}>
-        <Text accessibilityRole="header" style={styles.title}>함께 빨기 계획</Text>
+        <Text accessibilityRole="header" style={styles.title}>{selectedCount === 1 ? '세탁 계획' : '함께 빨기 계획'}</Text>
         <Text style={styles.muted}>{summary}</Text>
       </View>
       {(plan.conflicts.length > 0 || plan.apart.length > 0) && (
@@ -251,9 +253,12 @@ function TogetherDetails({ plan, machine }: { plan: TogetherPlan; machine: Machi
       )}
       {plan.loads.map((load, index) => (
         <View key={load.garments.map(({ id }) => id).join()} style={[styles.card, drum.resultSection]}>
-          <Text style={drum.groupMeta}>{plan.loads.length > 1 ? (index + 1) + '회차 · ' : ''}{load.label} · {load.garments.length}벌</Text>
+          <View style={styles.wrap} accessible accessibilityLabel={`${plan.loads.length > 1 ? (index + 1) + '회차 · ' : ''}${load.label} · ${load.garments.length}벌`}>
+            {[...(plan.loads.length > 1 ? [(index + 1) + '회차'] : []), ...load.label.split(' · '), load.garments.length + '벌']
+              .map((part) => <Text key={part} style={drum.tag}>{part}</Text>)}
+          </View>
           <Text style={styles.rowTitle}>{list(load.garments)}</Text>
-          <Text style={styles.muted}>{load.advice}</Text>
+          {!(machine && machineGuide(load.garments, machine)) && <Text style={styles.muted}>{load.advice}</Text>}
           <MachineSteps garments={load.garments} machine={machine} />
         </View>
       ))}
@@ -269,13 +274,27 @@ function TogetherDetails({ plan, machine }: { plan: TogetherPlan; machine: Machi
           {plan.notes.map(({ garment, lines }) => (
             <View key={garment.id} style={drum.dryingRow}>
               <Text style={styles.rowTitle}>{garment.name}</Text>
-              {lines.map((line) => <Text key={line} style={styles.muted}>{line}</Text>)}
+              {lines.map((line) => {
+                const category = noteCategory(line);
+                return (
+                  <Text key={line} style={styles.muted}>
+                    {'• '}{category && <Text style={drum.noteLabel}>{category} </Text>}{line}
+                  </Text>
+                );
+              })}
             </View>
           ))}
         </View>
       )}
     </>
   );
+}
+
+/** 표백·다림질·드라이클리닝 중 정확히 하나만 해당하는 줄에 붙일 분류 이름. */
+function noteCategory(line: string) {
+  const matches = [['표백', /표백/], ['다림질', /다림/], ['드라이클리닝', /드라이/]]
+    .filter(([, pattern]) => (pattern as RegExp).test(line));
+  return matches.length === 1 ? (matches[0][0] as string) : null;
 }
 
 function MachineSteps({ garments, machine }: { garments: Garment[]; machine: Machine | null }) {
@@ -289,10 +308,7 @@ function MachineSteps({ garments, machine }: { garments: Garment[]; machine: Mac
   }
   return (
     <View style={drum.validation}>
-      <Text style={styles.rowTitle}>{machine.maker} {machine.model} {guide.checks.length ? '확인할 설정' : '설정 방법'}</Text>
-      {guide.checks.length > 0 && <Notice>{`이 조합은 조건부예요. 아래 값을 확인하기 전에는 설정을 적용하지 마세요.\n${guide.checks.join('\n')}`}</Notice>}
-      {guide.steps.map((line, index) => <Text key={line} style={styles.body}>{index + 1}. {line}</Text>)}
-      <ManualLink url={guide.sourceUrl} label="공식 설명서에서 설정 보기" />
+      <MachineGuideBody machine={machine} guide={guide} />
       {guide.setting.temperatureCelsius !== null && guide.setting.spinRpm !== null && (
         <Validation key={`${machine.id}-${guide.setting.id}`} garments={garments} machine={machine}
           initialCourse={guide.courseId} initialTemp={guide.setting.temperatureCelsius} initialSpin={guide.setting.spinRpm} />
@@ -301,7 +317,7 @@ function MachineSteps({ garments, machine }: { garments: Garment[]; machine: Mac
   );
 }
 
-function DryingDetails({ garments }: { garments: Garment[] }) {
+function DryingDetails({ garments, notes }: { garments: Garment[]; notes: TogetherPlan['dryingNotes'] }) {
   return (
     <View style={[styles.card, drum.resultSection]}>
       <Text accessibilityRole="header" style={styles.title}>건조 안내</Text>
@@ -310,6 +326,9 @@ function DryingDetails({ garments }: { garments: Garment[] }) {
           <Text style={styles.rowTitle}>{garment.name}</Text>
           <Text style={[styles.body, garment.dryer === 'no' && drum.dryerCaution]}>{dryerStatus[garment.dryer]}</Text>
           <Text style={styles.muted}>{garment.drying || '자연건조 방법 확인 필요'}</Text>
+          {(notes.find((entry) => entry.garment.id === garment.id)?.lines ?? [])
+            .filter((line) => line !== garment.drying)
+            .map((line) => <Text key={line} style={styles.muted}>• {line}</Text>)}
         </View>
       ))}
     </View>
@@ -400,5 +419,7 @@ const drum = StyleSheet.create({
   resultSection: { padding: 13, gap: 10 },
   excludedRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingTop: 9, borderTopWidth: 1, borderTopColor: palette.line },
   dryingRow: { paddingTop: 9, gap: 2, borderTopWidth: 1, borderTopColor: palette.line },
+  tag: { overflow: 'hidden', paddingHorizontal: 9, paddingVertical: 3, borderRadius: 999, backgroundColor: palette.accentWash, color: palette.accent, fontSize: 12, lineHeight: 17, fontWeight: '700' },
+  noteLabel: { color: palette.ink, fontWeight: '800' },
   dryerCaution: { color: palette.error },
 });

@@ -10,8 +10,8 @@ import { LaundryProvider } from '../src/store';
 import { LaundryRouteHeader, palette, ScreenHeader, SpringPressable, styles, type IconName } from '../src/ui';
 
 const tabs: { href: Href; name: string; icon: IconName; selected: IconName; group?: 'laundry' }[] = [
-  { href: '/', name: '홈', icon: 'home-outline', selected: 'home' },
   { href: '/drum', name: '세탁', icon: 'disc-outline', selected: 'disc', group: 'laundry' },
+  { href: '/', name: '홈', icon: 'home-outline', selected: 'home' },
   { href: '/wardrobe', name: '옷장', icon: 'shirt-outline', selected: 'shirt' },
 ];
 
@@ -87,18 +87,11 @@ function AppShell() {
         }}
         style={({ pressed }) => [
           layout.tab,
-          tab.group === 'laundry' && layout.laundryTab,
-          active && tab.group !== 'laundry' && layout.activeTab,
+          active && layout.activeTab,
           pressed && styles.dimmed,
         ]}
       >
-        {tab.group === 'laundry' ? (
-          <View style={[layout.laundryIconTile, { backgroundColor: active ? palette.accent : palette.lilac }]}>
-            <Ionicons name={active ? tab.selected : tab.icon} size={20} color={active ? palette.inverse : palette.accent} />
-          </View>
-        ) : (
-          <Ionicons name={active ? tab.selected : tab.icon} size={21} color={active ? palette.accent : palette.muted} />
-        )}
+        <Ionicons name={active ? tab.selected : tab.icon} size={21} color={active ? palette.accent : palette.muted} />
         <Text style={[layout.tabLabel, active && layout.activeTabLabel]}>{tab.name}</Text>
       </SpringPressable>
     );
@@ -121,11 +114,6 @@ const layout = StyleSheet.create({
   dockBlur: { ...StyleSheet.absoluteFill, borderRadius: 24 },
   tabs: { flex: 1, width: '100%', alignSelf: 'center', flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 4, paddingHorizontal: 11 },
   tab: { flex: 1, minWidth: 0, height: 56, borderRadius: 15, justifyContent: 'center', alignItems: 'center', gap: 2 },
-  laundryTab: { height: 60 },
-  laundryIconTile: {
-    width: 38, height: 38, alignItems: 'center', justifyContent: 'center', borderRadius: 13,
-    shadowColor: palette.navy, shadowOpacity: 0.13, shadowRadius: 5, shadowOffset: { width: 0, height: 2 }, elevation: 3,
-  },
   activeTab: { backgroundColor: palette.accentWash },
   tabLabel: { color: palette.muted, fontSize: 10, lineHeight: 13, fontWeight: '700' },
   activeTabLabel: { color: palette.accent, fontWeight: '800' },

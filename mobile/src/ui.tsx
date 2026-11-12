@@ -171,7 +171,7 @@ export function LaundryRouteHeader({ active, onBack, onNavigate }: LaundryRouteH
       </SpringPressable>
       <View style={styles.laundrySwitch}>
         {([
-          ['drum', '드럼', '/drum'],
+          ['drum', '계획', '/drum'],
           ['machines', '세탁기', '/machines'],
         ] as const).map(([key, label, route]) => {
           const selected = active === key;
@@ -189,6 +189,7 @@ export function LaundryRouteHeader({ active, onBack, onNavigate }: LaundryRouteH
           );
         })}
       </View>
+      <View style={styles.laundryHeaderSpacer} accessible={false} importantForAccessibility="no-hide-descendants" />
     </View>
   );
 }
@@ -308,12 +309,13 @@ export const styles = StyleSheet.create({
   content: { paddingHorizontal: 20, paddingTop: 16, paddingBottom: 26, gap: 17, width: '100%', maxWidth: 640, alignSelf: 'center' },
   heading: { gap: 5, paddingBottom: 2 },
   screenHeader: { minHeight: 56, width: '100%', maxWidth: 640, alignSelf: 'center', flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, gap: 0 },
-  laundryHeader: { gap: 8 },
+  laundryHeader: { gap: 8, justifyContent: 'center' },
+  laundryHeaderSpacer: { width: 44 },
   headerBack: { width: 44, height: 44, alignItems: 'flex-start', justifyContent: 'center', paddingLeft: 1 },
-  laundrySwitch: { flex: 1, minWidth: 0, maxWidth: 240, flexDirection: 'row', padding: 3, gap: 3, borderRadius: 14, backgroundColor: palette.subtle },
-  laundrySegment: { flex: 1, minWidth: 0, minHeight: 36, paddingHorizontal: 8, borderRadius: 11, alignItems: 'center', justifyContent: 'center' },
+  laundrySwitch: { flex: 1, minWidth: 0, maxWidth: 300, flexDirection: 'row', padding: 4, gap: 4, borderRadius: 16, backgroundColor: palette.subtle },
+  laundrySegment: { flex: 1, minWidth: 0, minHeight: 44, paddingHorizontal: 8, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
   laundrySegmentSelected: { backgroundColor: palette.surface, borderWidth: 1, borderColor: palette.line },
-  laundrySegmentLabel: { color: palette.muted, fontSize: 12, lineHeight: 16, fontWeight: '700' },
+  laundrySegmentLabel: { color: palette.muted, fontSize: 15, lineHeight: 20, fontWeight: '700' },
   laundrySegmentLabelSelected: { color: palette.accent, fontWeight: '800' },
   headerTitle: { flex: 1, minWidth: 0 },
   headerAction: { minHeight: 44, alignItems: 'center', justifyContent: 'center', marginLeft: 8 },

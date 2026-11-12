@@ -285,7 +285,7 @@ def material_guidance(
     )
 
     # The material and the label are separate sources: skip only the topic the label has answered.
-    water_specified = label.max_wash_temperature_c is not None or _has_note(
+    water_specified = label.max_wash_temperature_c is not None or label.wash_water is not None or _has_note(
         special_notes,
         r"(?:세탁|물)\s*(?:온도|온수|찬물|미온수)|뜨거운\s*물|찬물|미지근한\s*물|"
         r"\b(?:cold|warm|hot)\s+wash\b|(?:(?:세탁|물|wash).{0,20})\b\d+\s*°?\s*c\b|"
@@ -432,7 +432,8 @@ def new_label_photo_request(*, padded: bool = False) -> PhotoRequest:
 
 def request_label_photo(care: LabelReadings, issue: PhotoIssue | None = None) -> PhotoRequest | None:
     missing_washing = care.wash_method is None or (
-        care.wash_method.value != "do_not_wash" and care.max_wash_temperature_c is None
+        care.wash_method.value != "do_not_wash"
+        and care.max_wash_temperature_c is None and care.wash_water is None
     )
     missing_drying = care.natural_dry is None and (
         care.tumble_dry_allowed is None or (care.tumble_dry_allowed.value and care.tumble_dry_heat is None)
@@ -500,12 +501,15 @@ def format_analysis(readings: PhotoReadings, requested_type: RequestedPhotoType)
     label = normalize_care(readings.care_label or LabelReadings())
     photo_request = request_label_photo(label, readings.photo_issue)
     guidance = describe_care(label)
+    # Fibre-based tips follow the label's own lines and carry the material prefix. Without any
+    # label-derived line the source is "material_estimate" so the app never saves them as label notes.
+    by_material = material_guidance(label)
     return AnalysisResponse(
         image_type="care_label",
         status="needs_confirmation" if photo_request else "analyzed",
         care_label=format_fields(label),
-        care_guidance=guidance,
-        care_guidance_source="care_label" if guidance else None,
+        care_guidance=[*guidance, *by_material],
+        care_guidance_source="care_label" if guidance else "material_estimate" if by_material else None,
         photo_request=photo_request,
         next_actions=["capture_label", "manual_entry"] if photo_request else [],
         message=label_message(label, guidance, photo_request),
@@ -514,7 +518,7 @@ def format_analysis(readings: PhotoReadings, requested_type: RequestedPhotoType)
 
 def normalize_care(label: LabelReadings) -> LabelReadings:
     if label.wash_method and label.wash_method.value == "do_not_wash":
-        label = label.model_copy(update={"max_wash_temperature_c": None, "wash_cycle": None})
+        label = label.model_copy(update={"max_wash_temperature_c": None, "wash_water": None, "wash_cycle": None})
     elif temperature := label.max_wash_temperature_c:
         evidence = normalize("NFKC", temperature.evidence).replace("−", "-")
         evidence_numbers = {
@@ -531,6 +535,7 @@ def normalize_care(label: LabelReadings) -> LabelReadings:
 
 def label_message(label: LabelReadings, guidance: list[str], photo_request: PhotoRequest | None) -> str:
     sentences = list(guidance)
+    water = [label.wash_water.value] if label.wash_water else []
     if label.wash_method and label.max_wash_temperature_c:
         temperature = label.max_wash_temperature_c.value
         if label.wash_method.value == "machine_wash":
@@ -540,9 +545,9 @@ def label_message(label: LabelReadings, guidance: list[str], photo_request: Phot
                 f"세탁기에 넣을 땐 물 온도를 {temperature}°C 이하로 맞추고 {setting} 코스로 돌려 주세요."
                 if setting else f"세탁기에 넣을 땐 {temperature}°C 이하의 물로 세탁해 주세요."
             )
-            sentences[:3 if setting else 2] = [washing]
+            sentences[:(3 if setting else 2) + len(water)] = [washing, *water]
         elif label.wash_method.value == "hand_wash":
-            sentences[:2] = [f"{temperature}°C 이하의 물에서 손세탁해 주세요."]
+            sentences[:2 + len(water)] = [f"{temperature}°C 이하의 물에서 손세탁해 주세요.", *water]
     if label.tumble_dry_allowed and not label.tumble_dry_allowed.value and label.natural_dry:
         index = sentences.index("건조기를 사용하지 마세요.")
         drying = NATURAL_DRY_GUIDANCE[label.natural_dry.value].removeprefix("옷을 ")
@@ -577,6 +582,8 @@ def describe_care(label: LabelReadings, *, product_source: ProductSource | None 
     guidance = []
     if label.wash_method:
         guidance.append(WASH_GUIDANCE[label.wash_method.value])
+    if label.wash_water:
+        guidance.append(label.wash_water.value)
     if label.max_wash_temperature_c:
         source = {"official_product": "공식 안내", "product_listing": "판매처 상품 안내"}.get(product_source, "라벨")
         guidance.append(f"{source}에 표시된 최대 세탁 온도는 {label.max_wash_temperature_c.value}°C예요.")
